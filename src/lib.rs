@@ -123,7 +123,7 @@ pub fn build_operation_posture(
         operation: operation.to_string(),
         state: state.to_string(),
         service_refs: vec![DEFAULT_SUBJECT_REF.to_string()],
-        capability_refs: vec!["service.manage".to_string()],
+        capability_refs: vec![constitute_protocol::CAPABILITY_SERVICE_MANAGE.to_string()],
         authority_refs: vec!["authority:ops-admin".to_string()],
         grant_refs: vec!["grant:service-manager:lab-service".to_string()],
         runner_operation_ref: Some(format!(
@@ -258,7 +258,7 @@ pub fn reduce_service_manager_posture(
         manager_ref: DEFAULT_MANAGER_REF.to_string(),
         state: state.to_string(),
         service_refs: vec![DEFAULT_SUBJECT_REF.to_string()],
-        capability_refs: vec!["service.manage".to_string()],
+        capability_refs: vec![constitute_protocol::CAPABILITY_SERVICE_MANAGE.to_string()],
         operation_refs: operations
             .iter()
             .map(|operation| operation.operation_id.clone())
