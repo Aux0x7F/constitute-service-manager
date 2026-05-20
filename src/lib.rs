@@ -1,9 +1,10 @@
 use anyhow::{Result, anyhow};
 use constitute_protocol::{
-    RECORD_RESOURCE_POSTURE, RECORD_SERVICE_MANAGER_OPERATION_POSTURE,
-    RECORD_SERVICE_MANAGER_POSTURE, RECORD_SERVICE_MANAGER_PROOF_DIGEST,
-    RECORD_SERVICE_MANAGER_RELEASE_CONTRACT, RECORD_SERVICE_MANAGER_SECRET_BOUNDARY,
-    ResourcePosture, SERVICE_MANAGER_OPERATION_HEALTH_CHECK, SERVICE_MANAGER_OPERATION_INSTALL,
+    RECORD_RESOURCE_POSTURE, RECORD_SERVICE_MANAGER_LAB_PROOF,
+    RECORD_SERVICE_MANAGER_OPERATION_POSTURE, RECORD_SERVICE_MANAGER_POSTURE,
+    RECORD_SERVICE_MANAGER_PROOF_DIGEST, RECORD_SERVICE_MANAGER_RELEASE_CONTRACT,
+    RECORD_SERVICE_MANAGER_SECRET_BOUNDARY, RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture,
+    SERVICE_MANAGER_OPERATION_HEALTH_CHECK, SERVICE_MANAGER_OPERATION_INSTALL,
     SERVICE_MANAGER_OPERATION_PROMOTE, SERVICE_MANAGER_OPERATION_RELEASE,
     SERVICE_MANAGER_OPERATION_RESTART, SERVICE_MANAGER_OPERATION_ROLLBACK,
     SERVICE_MANAGER_OPERATION_SECRET_READY, SERVICE_MANAGER_OPERATION_START,
@@ -13,11 +14,13 @@ use constitute_protocol::{
     SERVICE_MANAGER_POSTURE_READY, SERVICE_MANAGER_PROOF_STATE_BLOCKED,
     SERVICE_MANAGER_PROOF_STATE_FAILED, SERVICE_MANAGER_PROOF_STATE_PROVED,
     SURFACE_APP_CONTRACT_STATE_READY, SURFACE_SECRET_BOUNDARY_RESOLVED,
-    ServiceManagerOperationPostureRecord, ServiceManagerPostureRecord,
-    ServiceManagerProofDigestRecord, ServiceManagerReleaseContractRecord,
-    ServiceManagerSecretBoundaryRecord, validate_service_manager_operation_posture,
-    validate_service_manager_posture, validate_service_manager_proof_digest,
-    validate_service_manager_release_contract, validate_service_manager_secret_boundary,
+    ServiceManagerLabProofRecord, ServiceManagerOperationPostureRecord,
+    ServiceManagerPostureRecord, ServiceManagerProofDigestRecord,
+    ServiceManagerReleaseContractRecord, ServiceManagerSecretBoundaryRecord,
+    ServiceManagerTrainDigestRecord, validate_service_manager_lab_proof,
+    validate_service_manager_operation_posture, validate_service_manager_posture,
+    validate_service_manager_proof_digest, validate_service_manager_release_contract,
+    validate_service_manager_secret_boundary, validate_service_manager_train_digest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -38,6 +41,8 @@ pub struct ServiceManagerLifecycleFixture {
     pub release_contract: ServiceManagerReleaseContractRecord,
     pub operations: Vec<ServiceManagerOperationPostureRecord>,
     pub proof_digests: Vec<ServiceManagerProofDigestRecord>,
+    pub lab_proofs: Vec<ServiceManagerLabProofRecord>,
+    pub train_digests: Vec<ServiceManagerTrainDigestRecord>,
     pub posture: ServiceManagerPostureRecord,
 }
 
@@ -60,6 +65,14 @@ pub fn build_secret_boundary(issued_at: u64) -> ServiceManagerSecretBoundaryReco
 }
 
 pub fn build_release_contract(issued_at: u64) -> ServiceManagerReleaseContractRecord {
+    build_release_contract_with_refs(issued_at, vec![], vec![])
+}
+
+pub fn build_release_contract_with_refs(
+    issued_at: u64,
+    proof_digest_refs: Vec<String>,
+    lab_proof_refs: Vec<String>,
+) -> ServiceManagerReleaseContractRecord {
     ServiceManagerReleaseContractRecord {
         kind: Some(RECORD_SERVICE_MANAGER_RELEASE_CONTRACT.to_string()),
         contract_id: "release-contract:lab-service:current".to_string(),
@@ -76,8 +89,8 @@ pub fn build_release_contract(issued_at: u64) -> ServiceManagerReleaseContractRe
         compatibility_refs: vec!["protocol:service-manager:v1".to_string()],
         authority_refs: vec!["authority:ops-admin".to_string()],
         secret_boundary_refs: vec!["secret-boundary:lab-service".to_string()],
-        proof_digest_refs: vec![],
-        lab_proof_refs: vec![],
+        proof_digest_refs,
+        lab_proof_refs,
         evidence_refs: vec!["evidence:release-contract:ready".to_string()],
         blocked_reasons: vec![],
         safe_facts: json!({ "release": "ready" }),
@@ -219,6 +232,117 @@ pub fn build_proof_digest(
     Ok(digest)
 }
 
+pub fn build_lab_proof(
+    proof_id: &str,
+    release_contract: &ServiceManagerReleaseContractRecord,
+    state: &str,
+    started_at: u64,
+    blocked_reasons: Vec<String>,
+) -> Result<ServiceManagerLabProofRecord> {
+    build_lab_proof_with_train(
+        proof_id,
+        "train:service-manager:lifecycle",
+        release_contract,
+        state,
+        started_at,
+        blocked_reasons,
+    )
+}
+
+pub fn build_lab_proof_with_train(
+    proof_id: &str,
+    train_ref: &str,
+    release_contract: &ServiceManagerReleaseContractRecord,
+    state: &str,
+    started_at: u64,
+    blocked_reasons: Vec<String>,
+) -> Result<ServiceManagerLabProofRecord> {
+    let proved = state == SERVICE_MANAGER_PROOF_STATE_PROVED;
+    let proof = ServiceManagerLabProofRecord {
+        kind: Some(RECORD_SERVICE_MANAGER_LAB_PROOF.to_string()),
+        proof_id: proof_id.to_string(),
+        manager_id: release_contract.manager_id.clone(),
+        subject_ref: release_contract.subject_ref.clone(),
+        profile: "surfaceLandscape".to_string(),
+        state: state.to_string(),
+        train_ref: Some(train_ref.to_string()),
+        release_contract_ref: Some(release_contract.contract_id.clone()),
+        app_contract_ref: release_contract.app_contract_ref.clone(),
+        surface_refs: vec![
+            "surface:account".to_string(),
+            "surface:operator".to_string(),
+        ],
+        service_refs: vec![release_contract.subject_ref.clone()],
+        environment_refs: vec!["env:local-dev".to_string()],
+        artifact_refs: proved
+            .then_some("artifact:service-manager:lab-proof".to_string())
+            .into_iter()
+            .collect(),
+        metrics_refs: vec!["metrics:service-manager:lab-proof".to_string()],
+        proof_refs: proved
+            .then_some("proof:service-manager:lab-proof".to_string())
+            .into_iter()
+            .collect(),
+        evidence_refs: vec!["evidence:service-manager:lab-proof".to_string()],
+        blocked_reasons,
+        safe_facts: json!({ "profile": "surfaceLandscape", "state": state }),
+        started_at,
+        accepted_at: Some(started_at + 10),
+        completed_at: proved.then_some(started_at + 600),
+        observed_at: Some(started_at + 620),
+        expires_at: Some(started_at + 3600),
+    };
+    validate_service_manager_lab_proof(&proof)?;
+    Ok(proof)
+}
+
+pub fn build_train_digest(
+    train_id: &str,
+    release_contract: &ServiceManagerReleaseContractRecord,
+    operations: &[ServiceManagerOperationPostureRecord],
+    proof_digests: &[ServiceManagerProofDigestRecord],
+    lab_proofs: &[ServiceManagerLabProofRecord],
+    state: &str,
+    observed_at: u64,
+    blocked_reasons: Vec<String>,
+) -> Result<ServiceManagerTrainDigestRecord> {
+    let digest = ServiceManagerTrainDigestRecord {
+        kind: Some(RECORD_SERVICE_MANAGER_TRAIN_DIGEST.to_string()),
+        train_id: train_id.to_string(),
+        manager_id: release_contract.manager_id.clone(),
+        subject_ref: release_contract.subject_ref.clone(),
+        state: state.to_string(),
+        repo_refs: vec!["repo:constitute-service-manager".to_string()],
+        commit_refs: vec!["git:constitute-service-manager:local".to_string()],
+        app_contract_refs: release_contract
+            .app_contract_ref
+            .clone()
+            .into_iter()
+            .collect(),
+        release_contract_refs: vec![release_contract.contract_id.clone()],
+        operation_refs: operations
+            .iter()
+            .map(|operation| operation.operation_id.clone())
+            .collect(),
+        proof_digest_refs: proof_digests
+            .iter()
+            .map(|digest| digest.digest_id.clone())
+            .collect(),
+        lab_proof_refs: lab_proofs
+            .iter()
+            .map(|proof| proof.proof_id.clone())
+            .collect(),
+        metrics_refs: vec!["metrics:service-manager:train".to_string()],
+        evidence_refs: vec!["evidence:service-manager:train".to_string()],
+        blocked_reasons,
+        safe_facts: json!({ "train": "service-manager:lifecycle" }),
+        observed_at,
+        expires_at: Some(observed_at + 3600),
+    };
+    validate_service_manager_train_digest(&digest)?;
+    Ok(digest)
+}
+
 pub fn reduce_service_manager_posture(
     operations: &[ServiceManagerOperationPostureRecord],
     proof_digests: &[ServiceManagerProofDigestRecord],
@@ -226,6 +350,12 @@ pub fn reduce_service_manager_posture(
 ) -> Result<ServiceManagerPostureRecord> {
     if operations.is_empty() {
         return Err(anyhow!("service manager posture requires operations"));
+    }
+    for operation in operations {
+        validate_service_manager_operation_posture(operation)?;
+    }
+    for proof_digest in proof_digests {
+        validate_service_manager_proof_digest(proof_digest)?;
     }
     let mut blocked_reasons = Vec::new();
     for operation in operations {
@@ -279,6 +409,147 @@ pub fn reduce_service_manager_posture(
     Ok(posture)
 }
 
+pub fn reduce_protected_service_manager_posture(
+    secret_boundary: &ServiceManagerSecretBoundaryRecord,
+    release_contract: &ServiceManagerReleaseContractRecord,
+    operations: &[ServiceManagerOperationPostureRecord],
+    proof_digests: &[ServiceManagerProofDigestRecord],
+    lab_proofs: &[ServiceManagerLabProofRecord],
+    train_digests: &[ServiceManagerTrainDigestRecord],
+    issued_at: u64,
+) -> Result<ServiceManagerPostureRecord> {
+    validate_service_manager_secret_boundary(secret_boundary)?;
+    validate_service_manager_release_contract(release_contract)?;
+    for lab_proof in lab_proofs {
+        validate_service_manager_lab_proof(lab_proof)?;
+    }
+    for train_digest in train_digests {
+        validate_service_manager_train_digest(train_digest)?;
+    }
+
+    let mut posture = reduce_service_manager_posture(operations, proof_digests, issued_at)?;
+    let mut blocked_reasons = posture.blocked_reasons.clone();
+
+    if secret_boundary.state != SURFACE_SECRET_BOUNDARY_RESOLVED {
+        blocked_reasons.push(format!("secretBoundary:{}", secret_boundary.state));
+    }
+    if secret_boundary
+        .expires_at
+        .is_some_and(|expires_at| expires_at <= issued_at)
+    {
+        blocked_reasons.push("secretBoundaryExpired".to_string());
+    }
+    if release_contract.state != SURFACE_APP_CONTRACT_STATE_READY {
+        blocked_reasons.push(format!("releaseContract:{}", release_contract.state));
+    }
+    if release_contract
+        .expires_at
+        .is_some_and(|expires_at| expires_at <= issued_at)
+    {
+        blocked_reasons.push("releaseContractExpired".to_string());
+    }
+    if release_contract.rollback_required.unwrap_or(true) && release_contract.rollback_ref.is_none()
+    {
+        blocked_reasons.push("rollbackRequired".to_string());
+    }
+    if release_contract.proof_digest_refs.is_empty() {
+        blocked_reasons.push("releaseContract:missingProofDigestRefs".to_string());
+    }
+    if release_contract.lab_proof_refs.is_empty() {
+        blocked_reasons.push("releaseContract:missingLabProofRefs".to_string());
+    }
+    for proof_ref in &release_contract.proof_digest_refs {
+        if !proof_digests
+            .iter()
+            .any(|digest| &digest.digest_id == proof_ref)
+        {
+            blocked_reasons.push(format!("releaseContract:missingProofDigest:{proof_ref}"));
+        }
+    }
+    for lab_proof_ref in &release_contract.lab_proof_refs {
+        if !lab_proofs
+            .iter()
+            .any(|proof| &proof.proof_id == lab_proof_ref)
+        {
+            blocked_reasons.push(format!("releaseContract:missingLabProof:{lab_proof_ref}"));
+        }
+    }
+    for operation in operations.iter().filter(|operation| {
+        matches!(
+            operation.state.as_str(),
+            SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED
+                | SERVICE_MANAGER_OPERATION_STATE_FAILED
+                | SERVICE_MANAGER_OPERATION_STATE_BLOCKED
+        )
+    }) {
+        if !proof_digests
+            .iter()
+            .any(|digest| digest.operation_id == operation.operation_id)
+        {
+            blocked_reasons.push(format!(
+                "operationMissingProofDigest:{}",
+                operation.operation_id
+            ));
+        }
+    }
+    if lab_proofs.is_empty() {
+        blocked_reasons.push("missingLabProof".to_string());
+    }
+    if train_digests.is_empty() {
+        blocked_reasons.push("missingTrainDigest".to_string());
+    }
+
+    blocked_reasons.sort();
+    blocked_reasons.dedup();
+    posture.state = if blocked_reasons.is_empty() {
+        SERVICE_MANAGER_POSTURE_READY.to_string()
+    } else {
+        SERVICE_MANAGER_POSTURE_BLOCKED.to_string()
+    };
+    posture.blocked_reasons = blocked_reasons;
+    posture.secret_boundary = json!({
+        "state": secret_boundary.state,
+        "boundaryId": secret_boundary.boundary_id,
+        "secretRefs": secret_boundary.secret_refs,
+        "accessGroupRefs": secret_boundary.access_group_refs,
+        "authorityRefs": secret_boundary.authority_refs,
+        "evidenceRefs": secret_boundary.evidence_refs,
+        "expiresAt": secret_boundary.expires_at
+    });
+    posture.release_posture = json!({
+        "state": if release_contract.state == SURFACE_APP_CONTRACT_STATE_READY { "releaseReady" } else { "blocked" },
+        "contractId": release_contract.contract_id,
+        "appContractRef": release_contract.app_contract_ref,
+        "version": release_contract.version,
+        "buildRef": release_contract.build_ref,
+        "releaseRef": release_contract.release_ref,
+        "rollbackRef": release_contract.rollback_ref,
+        "rollbackRequired": release_contract.rollback_required.unwrap_or(true),
+        "compatibilityRefs": release_contract.compatibility_refs,
+        "proofDigestRefs": release_contract.proof_digest_refs,
+        "labProofRefs": release_contract.lab_proof_refs,
+        "evidenceRefs": release_contract.evidence_refs,
+        "blockedReasons": posture.blocked_reasons,
+        "expiresAt": release_contract.expires_at
+    });
+    posture.rollback_posture = json!({
+        "state": if release_contract.rollback_ref.is_some() { "rollbackReady" } else { "blocked" },
+        "rollbackRef": release_contract.rollback_ref,
+        "rollbackRequired": release_contract.rollback_required.unwrap_or(true),
+        "blockedReasons": if release_contract.rollback_ref.is_some() { Vec::<String>::new() } else { vec!["rollbackRequired".to_string()] }
+    });
+    posture.evidence_refs = vec![
+        "evidence:service-manager:posture".to_string(),
+        secret_boundary.evidence_refs.join("|"),
+        release_contract.evidence_refs.join("|"),
+    ]
+    .into_iter()
+    .filter(|value| !value.is_empty())
+    .collect();
+    validate_service_manager_posture(&posture)?;
+    Ok(posture)
+}
+
 pub fn service_manager_lifecycle_fixture(issued_at: u64) -> Result<ServiceManagerLifecycleFixture> {
     let operation_kinds = [
         SERVICE_MANAGER_OPERATION_INSTALL,
@@ -316,14 +587,53 @@ pub fn service_manager_lifecycle_fixture(issued_at: u64) -> Result<ServiceManage
             )
         })
         .collect::<Result<Vec<_>>>()?;
-    let posture = reduce_service_manager_posture(&operations, &proof_digests, issued_at)?;
+    let proof_digest_refs = proof_digests
+        .iter()
+        .map(|digest| digest.digest_id.clone())
+        .collect::<Vec<_>>();
+    let release_contract = build_release_contract_with_refs(
+        issued_at,
+        proof_digest_refs,
+        vec!["lab-proof:service-manager:lifecycle".to_string()],
+    );
+    let train_id = "train:service-manager:lifecycle";
+    let lab_proofs = vec![build_lab_proof_with_train(
+        "lab-proof:service-manager:lifecycle",
+        train_id,
+        &release_contract,
+        SERVICE_MANAGER_PROOF_STATE_PROVED,
+        issued_at + 3000,
+        vec![],
+    )?];
+    let train_digests = vec![build_train_digest(
+        train_id,
+        &release_contract,
+        &operations,
+        &proof_digests,
+        &lab_proofs,
+        SERVICE_MANAGER_PROOF_STATE_PROVED,
+        issued_at + 4000,
+        vec![],
+    )?];
+    let secret_boundary = build_secret_boundary(issued_at);
+    let posture = reduce_protected_service_manager_posture(
+        &secret_boundary,
+        &release_contract,
+        &operations,
+        &proof_digests,
+        &lab_proofs,
+        &train_digests,
+        issued_at,
+    )?;
     let fixture = ServiceManagerLifecycleFixture {
         manager_id: DEFAULT_MANAGER_ID.to_string(),
         subject_ref: DEFAULT_SUBJECT_REF.to_string(),
-        secret_boundary: build_secret_boundary(issued_at),
-        release_contract: build_release_contract(issued_at),
+        secret_boundary,
+        release_contract,
         operations,
         proof_digests,
+        lab_proofs,
+        train_digests,
         posture,
     };
     validate_fixture(&fixture)?;
@@ -347,18 +657,49 @@ pub fn blocked_operation_fixture(
         requested_at + 80,
         vec![reason.to_string()],
     )?;
-    let posture = reduce_service_manager_posture(
+    let release_contract = build_release_contract_with_refs(
+        requested_at,
+        vec![proof_digest.digest_id.clone()],
+        vec!["lab-proof:service-manager:blocked".to_string()],
+    );
+    let train_id = "train:service-manager:blocked";
+    let lab_proofs = vec![build_lab_proof_with_train(
+        "lab-proof:service-manager:blocked",
+        train_id,
+        &release_contract,
+        SERVICE_MANAGER_PROOF_STATE_BLOCKED,
+        requested_at + 120,
+        vec![reason.to_string()],
+    )?];
+    let train_digests = vec![build_train_digest(
+        train_id,
+        &release_contract,
         std::slice::from_ref(&operation),
         std::slice::from_ref(&proof_digest),
+        &lab_proofs,
+        SERVICE_MANAGER_PROOF_STATE_BLOCKED,
+        requested_at + 180,
+        vec![reason.to_string()],
+    )?];
+    let secret_boundary = build_secret_boundary(requested_at);
+    let posture = reduce_protected_service_manager_posture(
+        &secret_boundary,
+        &release_contract,
+        std::slice::from_ref(&operation),
+        std::slice::from_ref(&proof_digest),
+        &lab_proofs,
+        &train_digests,
         requested_at,
     )?;
     let fixture = ServiceManagerLifecycleFixture {
         manager_id: DEFAULT_MANAGER_ID.to_string(),
         subject_ref: DEFAULT_SUBJECT_REF.to_string(),
-        secret_boundary: build_secret_boundary(requested_at),
-        release_contract: build_release_contract(requested_at),
+        secret_boundary,
+        release_contract,
         operations: vec![operation],
         proof_digests: vec![proof_digest],
+        lab_proofs,
+        train_digests,
         posture,
     };
     validate_fixture(&fixture)?;
@@ -373,6 +714,12 @@ pub fn validate_fixture(fixture: &ServiceManagerLifecycleFixture) -> Result<()> 
     }
     for proof_digest in &fixture.proof_digests {
         validate_service_manager_proof_digest(proof_digest)?;
+    }
+    for lab_proof in &fixture.lab_proofs {
+        validate_service_manager_lab_proof(lab_proof)?;
+    }
+    for train_digest in &fixture.train_digests {
+        validate_service_manager_train_digest(train_digest)?;
     }
     validate_service_manager_posture(&fixture.posture)
 }
