@@ -16,4 +16,7 @@ coordination and proof posture.
 cargo test
 cargo run -- fixture lifecycle
 cargo run -- operation --operation restart --state succeeded
+cargo run -- init --state target/service-manager-state.json
+cargo run -- run --state target/service-manager-state.json --operation start
+cargo run -- status --state target/service-manager-state.json
 ```
