@@ -1,16 +1,21 @@
 use constitute_protocol::{
     SERVICE_MANAGER_OPERATION_RELEASE, SERVICE_MANAGER_OPERATION_RESTART,
-    SERVICE_MANAGER_OPERATION_ROLLBACK, SERVICE_MANAGER_OPERATION_STATE_BLOCKED,
+    SERVICE_MANAGER_OPERATION_ROLLBACK, SERVICE_MANAGER_OPERATION_SECRET_READY,
+    SERVICE_MANAGER_OPERATION_START, SERVICE_MANAGER_OPERATION_STATE_BLOCKED,
     SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED, SERVICE_MANAGER_POSTURE_BLOCKED,
-    SERVICE_MANAGER_POSTURE_READY, SURFACE_SECRET_BOUNDARY_BLOCKED,
-    validate_service_manager_operation_posture,
+    SERVICE_MANAGER_POSTURE_READY, SERVICE_MANAGER_PROOF_STATE_BLOCKED,
+    SURFACE_SECRET_BOUNDARY_BLOCKED, validate_service_manager_operation_posture,
 };
 use constitute_service_manager::{
-    blocked_operation_fixture, build_lab_proof_with_train, build_operation_posture,
+    ServiceOperationRequest, apply_service_operation, blocked_operation_fixture,
+    build_lab_proof_with_train, build_operation_posture, build_operation_posture_for_spec,
     build_release_contract, build_release_contract_with_refs, build_secret_boundary,
-    build_train_digest, reduce_protected_service_manager_posture,
-    service_manager_lifecycle_fixture, validate_fixture,
+    build_train_digest, default_managed_service_spec, default_manager_state, load_manager_state,
+    reduce_protected_service_manager_posture, save_manager_state,
+    service_manager_lifecycle_fixture, service_manager_status, validate_fixture,
 };
+
+const DEFAULT_NOW: u64 = 1_700_000_000;
 
 #[test]
 fn lifecycle_fixture_covers_manager_operations() {
@@ -230,4 +235,171 @@ fn cli_emits_valid_lifecycle_fixture() {
         serde_json::from_slice(&output.stdout).expect("fixture json");
     assert_eq!(fixture.posture.state, SERVICE_MANAGER_POSTURE_READY);
     validate_fixture(&fixture).expect("cli fixture validates");
+}
+
+#[test]
+fn dry_run_operation_persists_state_and_reduces_posture() {
+    let mut state = default_manager_state(DEFAULT_NOW);
+    let outcome = apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: SERVICE_MANAGER_OPERATION_START.to_string(),
+            requested_at: DEFAULT_NOW + 10,
+            dry_run: true,
+            blocked_reason: None,
+        },
+    )
+    .expect("apply operation");
+
+    assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED);
+    assert_eq!(state.operations.len(), 1);
+    assert_eq!(state.proof_digests.len(), 1);
+    assert_eq!(outcome.posture.state, SERVICE_MANAGER_POSTURE_READY);
+    assert_eq!(
+        outcome.operation_posture.subject_ref,
+        constitute_service_manager::DEFAULT_SUBJECT_REF
+    );
+}
+
+#[test]
+fn operation_blocks_when_secret_boundary_is_unresolved() {
+    let mut state = default_manager_state(DEFAULT_NOW);
+    state.services[0].secret_refs.clear();
+
+    let outcome = apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: SERVICE_MANAGER_OPERATION_SECRET_READY.to_string(),
+            requested_at: DEFAULT_NOW + 20,
+            dry_run: true,
+            blocked_reason: None,
+        },
+    )
+    .expect("apply blocked operation");
+
+    assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_BLOCKED);
+    assert!(
+        outcome
+            .blocked_reasons
+            .contains(&"secretBoundary:missingSecretRefs".to_string())
+    );
+    assert_eq!(
+        outcome.proof_digest.state,
+        SERVICE_MANAGER_PROOF_STATE_BLOCKED
+    );
+    assert_eq!(outcome.posture.state, SERVICE_MANAGER_POSTURE_BLOCKED);
+}
+
+#[test]
+fn promote_blocks_when_rollback_required_but_unavailable() {
+    let mut state = default_manager_state(DEFAULT_NOW);
+    state.services[0].rollback_ref = None;
+
+    let outcome = apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: constitute_protocol::SERVICE_MANAGER_OPERATION_PROMOTE.to_string(),
+            requested_at: DEFAULT_NOW + 30,
+            dry_run: true,
+            blocked_reason: None,
+        },
+    )
+    .expect("apply blocked promote");
+
+    assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_BLOCKED);
+    assert!(
+        outcome
+            .blocked_reasons
+            .contains(&"rollbackRequired".to_string())
+    );
+    assert_eq!(outcome.posture.rollback_posture["state"], "blocked");
+}
+
+#[test]
+fn blocked_rollback_can_report_missing_ref_as_preflight_posture() {
+    let mut spec = default_managed_service_spec();
+    spec.rollback_ref = None;
+    let operation = build_operation_posture_for_spec(
+        &spec,
+        SERVICE_MANAGER_OPERATION_ROLLBACK,
+        SERVICE_MANAGER_OPERATION_STATE_BLOCKED,
+        DEFAULT_NOW + 40,
+        vec!["rollbackRequired".to_string()],
+    )
+    .expect("blocked rollback posture");
+    assert_eq!(operation.rollback_ref, None);
+    assert!(validate_service_manager_operation_posture(&operation).is_ok());
+}
+
+#[test]
+fn state_file_roundtrips_through_cli_contract_helpers() {
+    let path = std::env::temp_dir().join(format!(
+        "constitute-service-manager-state-{}-{}.json",
+        std::process::id(),
+        DEFAULT_NOW
+    ));
+    let mut state = default_manager_state(DEFAULT_NOW);
+    let outcome = apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: SERVICE_MANAGER_OPERATION_START.to_string(),
+            requested_at: DEFAULT_NOW + 50,
+            dry_run: true,
+            blocked_reason: None,
+        },
+    )
+    .expect("apply operation");
+    save_manager_state(&path, &state).expect("save state");
+    let loaded = load_manager_state(&path, DEFAULT_NOW).expect("load state");
+    let posture =
+        service_manager_status(&loaded, "lab-service", DEFAULT_NOW + 60).expect("status posture");
+
+    assert_eq!(loaded.operations.len(), 1);
+    assert_eq!(posture.state, SERVICE_MANAGER_POSTURE_READY);
+    assert_eq!(
+        outcome.operation_posture.operation,
+        SERVICE_MANAGER_OPERATION_START
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn cli_run_and_status_roundtrip_state_file() {
+    let path = std::env::temp_dir().join(format!(
+        "constitute-service-manager-cli-{}-{}.json",
+        std::process::id(),
+        DEFAULT_NOW
+    ));
+    let path_arg = path.to_string_lossy().to_string();
+
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_constitute-service-manager"))
+        .args([
+            "run",
+            "--state",
+            &path_arg,
+            "--operation",
+            SERVICE_MANAGER_OPERATION_START,
+            "--at",
+            "1700000100",
+        ])
+        .output()
+        .expect("run cli");
+    assert!(run.status.success());
+    let outcome: constitute_service_manager::ServiceOperationOutcome =
+        serde_json::from_slice(&run.stdout).expect("outcome json");
+    assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED);
+
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_constitute-service-manager"))
+        .args(["status", "--state", &path_arg, "--at", "1700000200"])
+        .output()
+        .expect("status cli");
+    assert!(status.status.success());
+    let posture: constitute_protocol::ServiceManagerPostureRecord =
+        serde_json::from_slice(&status.stdout).expect("posture json");
+    assert_eq!(posture.state, SERVICE_MANAGER_POSTURE_READY);
+    let _ = std::fs::remove_file(path);
 }
