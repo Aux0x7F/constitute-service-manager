@@ -112,6 +112,18 @@ pub struct ManagedServiceSpec {
     pub app_contract_ref: Option<String>,
     pub version: Option<String>,
     pub build_ref: Option<String>,
+    #[serde(default)]
+    pub content_index_refs: Vec<String>,
+    #[serde(default)]
+    pub source_graph_refs: Vec<String>,
+    #[serde(default)]
+    pub source_snapshot_refs: Vec<String>,
+    #[serde(default)]
+    pub project_refs: Vec<String>,
+    #[serde(default)]
+    pub work_item_refs: Vec<String>,
+    #[serde(default)]
+    pub build_proof_refs: Vec<String>,
     pub release_ref: Option<String>,
     pub rollback_ref: Option<String>,
     pub rollback_required: bool,
@@ -234,6 +246,12 @@ pub fn default_managed_service_spec() -> ManagedServiceSpec {
         app_contract_ref: Some("app-contract:lab-managed@0.1.0".to_string()),
         version: Some("0.1.0".to_string()),
         build_ref: Some("build:lab-service:current".to_string()),
+        content_index_refs: vec!["content-index:source:lab-service".to_string()],
+        source_graph_refs: vec!["source:graph:lab-service".to_string()],
+        source_snapshot_refs: vec!["source:snapshot:lab-service:current".to_string()],
+        project_refs: vec!["project:constituency".to_string()],
+        work_item_refs: vec!["work-item:service-manager:lifecycle".to_string()],
+        build_proof_refs: vec!["build-proof:lab-service:current".to_string()],
         release_ref: Some("release:lab-service:current".to_string()),
         rollback_ref: Some("rollback:lab-service:previous".to_string()),
         rollback_required: true,
@@ -335,6 +353,12 @@ pub fn build_release_contract_for_spec(
         app_contract_ref: spec.app_contract_ref.clone(),
         version: spec.version.clone(),
         build_ref: spec.build_ref.clone(),
+        content_index_refs: spec.content_index_refs.clone(),
+        source_graph_refs: spec.source_graph_refs.clone(),
+        source_snapshot_refs: spec.source_snapshot_refs.clone(),
+        project_refs: spec.project_refs.clone(),
+        work_item_refs: spec.work_item_refs.clone(),
+        build_proof_refs: spec.build_proof_refs.clone(),
         release_ref: spec.release_ref.clone(),
         rollback_ref: spec.rollback_ref.clone(),
         rollback_required: Some(spec.rollback_required),
@@ -348,7 +372,13 @@ pub fn build_release_contract_for_spec(
         safe_facts: json!({
             "release": state,
             "serviceId": spec.service_id,
-            "version": spec.version
+            "version": spec.version,
+            "contentIndexRefs": spec.content_index_refs,
+            "sourceGraphRefs": spec.source_graph_refs,
+            "sourceSnapshotRefs": spec.source_snapshot_refs,
+            "projectRefs": spec.project_refs,
+            "workItemRefs": spec.work_item_refs,
+            "buildProofRefs": spec.build_proof_refs
         }),
         issued_at,
         expires_at: Some(issued_at + 3600),
@@ -444,6 +474,12 @@ pub fn build_operation_posture_for_spec(
         release_posture: json!({
             "state": if spec.release_ref.is_some() { "releaseReady" } else { "blocked" },
             "buildRef": spec.build_ref,
+            "contentIndexRefs": spec.content_index_refs,
+            "sourceGraphRefs": spec.source_graph_refs,
+            "sourceSnapshotRefs": spec.source_snapshot_refs,
+            "projectRefs": spec.project_refs,
+            "workItemRefs": spec.work_item_refs,
+            "buildProofRefs": spec.build_proof_refs,
             "releaseRef": spec.release_ref,
             "rollbackRef": spec.rollback_ref,
             "blockedReasons": if spec.release_ref.is_some() { Vec::<String>::new() } else { vec!["releaseContract:missingReleaseRef".to_string()] }
@@ -555,12 +591,65 @@ fn contract_target_contract_ref(spec: &ManagedServiceSpec) -> String {
         .unwrap_or_else(|| spec.host_adapter_ref.clone())
 }
 
+fn optional_ref(value: &Option<String>) -> Vec<String> {
+    value
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+        .into_iter()
+        .collect()
+}
+
+fn source_input_refs(spec: &ManagedServiceSpec) -> Vec<String> {
+    let mut refs = optional_ref(&spec.app_contract_ref);
+    refs.extend(spec.source_graph_refs.clone());
+    refs.extend(spec.source_snapshot_refs.clone());
+    refs.extend(spec.content_index_refs.clone());
+    refs
+}
+
+fn build_input_refs(spec: &ManagedServiceSpec) -> Vec<String> {
+    let mut refs = optional_ref(&spec.build_ref);
+    refs.extend(spec.build_proof_refs.clone());
+    refs
+}
+
+fn project_input_refs(spec: &ManagedServiceSpec) -> Vec<String> {
+    let mut refs = spec.project_refs.clone();
+    refs.extend(spec.work_item_refs.clone());
+    refs
+}
+
+fn first_ref(values: &[String]) -> Option<String> {
+    values
+        .iter()
+        .find(|value| !value.trim().is_empty())
+        .cloned()
+}
+
+fn lifecycle_input_refs(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+) -> Vec<String> {
+    let mut refs = vec![operation.operation_id.clone()];
+    refs.extend(source_input_refs(spec));
+    refs.extend(build_input_refs(spec));
+    refs.extend(optional_ref(&spec.release_ref));
+    refs.extend(optional_ref(&spec.rollback_ref));
+    refs.extend(project_input_refs(spec));
+    refs
+}
+
 fn contract_target_capability_slot_refs(spec: &ManagedServiceSpec, operation: &str) -> Vec<String> {
     let mut refs = vec![
         "slot:host-service-adapter".to_string(),
         "slot:lifecycle-contract".to_string(),
         "slot:source".to_string(),
+        "slot:content-index".to_string(),
+        "slot:source-graph".to_string(),
         "slot:build".to_string(),
+        "slot:build-proof".to_string(),
+        "slot:project-work".to_string(),
         "slot:release".to_string(),
         "slot:runner".to_string(),
     ];
@@ -584,8 +673,20 @@ fn contract_target_missing_slot_refs(spec: &ManagedServiceSpec, operation: &str)
     if spec.app_contract_ref.is_none() {
         refs.push("slot:source".to_string());
     }
+    if spec.source_graph_refs.is_empty() {
+        refs.push("slot:source-graph".to_string());
+    }
+    if spec.content_index_refs.is_empty() {
+        refs.push("slot:content-index".to_string());
+    }
     if spec.build_ref.is_none() {
         refs.push("slot:build".to_string());
+    }
+    if spec.build_proof_refs.is_empty() {
+        refs.push("slot:build-proof".to_string());
+    }
+    if spec.project_refs.is_empty() && spec.work_item_refs.is_empty() {
+        refs.push("slot:project-work".to_string());
     }
     if spec.release_ref.is_none() {
         refs.push("slot:release".to_string());
@@ -702,7 +803,7 @@ pub fn build_host_fabric_member_contribution_for_spec(
         subject_ref: spec.subject_ref.clone(),
         capability_refs: vec![constitute_protocol::CAPABILITY_SERVICE_MANAGE.to_string()],
         grant_refs: spec.grant_refs.clone(),
-        input_refs: vec![operation.operation_id.clone()],
+        input_refs: lifecycle_input_refs(spec, operation),
         output_refs: vec![format!("output:service-manager:{}", operation.operation_id)],
         evidence_refs: operation.evidence_refs.clone(),
         lifecycle_plan_refs: vec![lifecycle_plan_id(spec, operation)],
@@ -712,7 +813,10 @@ pub fn build_host_fabric_member_contribution_for_spec(
         safe_facts: json!({
             "role": FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
             "operation": operation.operation,
-            "serviceId": spec.service_id
+            "serviceId": spec.service_id,
+            "sourceInputRefs": source_input_refs(spec),
+            "buildInputRefs": build_input_refs(spec),
+            "projectInputRefs": project_input_refs(spec)
         }),
         observed_at,
         expires_at: Some(observed_at + 3600),
@@ -793,7 +897,7 @@ pub fn build_lifecycle_plan_for_spec(
             FABRIC_LIFECYCLE_PHASE_SOURCE,
             FABRIC_LIFECYCLE_PHASE_READY,
             format!("evidence:source:{}", spec.service_id),
-            spec.app_contract_ref.clone().into_iter().collect(),
+            source_input_refs(spec),
             vec![],
         ),
         lifecycle_phase(
@@ -804,7 +908,7 @@ pub fn build_lifecycle_plan_for_spec(
                 FABRIC_LIFECYCLE_PHASE_BLOCKED
             },
             format!("evidence:build:{}", spec.service_id),
-            spec.build_ref.clone().into_iter().collect(),
+            build_input_refs(spec),
             build_blockers,
         ),
         lifecycle_phase(
@@ -867,13 +971,20 @@ pub fn build_lifecycle_plan_for_spec(
         lifecycle_contract_refs: vec![spec.lifecycle_contract_ref.clone()],
         phase_postures: phases,
         member_contribution_refs,
-        evidence_refs: vec![format!("evidence:lifecycle-plan:{}", spec.service_id)],
+        evidence_refs: {
+            let mut refs = vec![format!("evidence:lifecycle-plan:{}", spec.service_id)];
+            refs.extend(spec.build_proof_refs.clone());
+            refs
+        },
         release_refs: spec.release_ref.clone().into_iter().collect(),
         blocked_reasons,
         safe_facts: json!({
             "serviceId": spec.service_id,
             "operation": operation.operation,
-            "state": plan_state
+            "state": plan_state,
+            "sourceInputRefs": source_input_refs(spec),
+            "buildInputRefs": build_input_refs(spec),
+            "projectInputRefs": project_input_refs(spec)
         }),
         observed_at,
         expires_at: Some(observed_at + 3600),
@@ -1284,9 +1395,29 @@ pub fn build_contract_target_registry_posture_for_spec(
         format!("evidence:source:{}", spec.service_id),
     ));
     slot_postures.push(target_slot_from_optional_ref(
+        "slot:source-graph",
+        first_ref(&spec.source_graph_refs),
+        format!("evidence:source-graph:{}", spec.service_id),
+    ));
+    slot_postures.push(target_slot_from_optional_ref(
+        "slot:content-index",
+        first_ref(&spec.content_index_refs),
+        format!("evidence:content-index:{}", spec.service_id),
+    ));
+    slot_postures.push(target_slot_from_optional_ref(
         "slot:build",
         spec.build_ref.clone(),
         format!("evidence:build:{}", spec.service_id),
+    ));
+    slot_postures.push(target_slot_from_optional_ref(
+        "slot:build-proof",
+        first_ref(&spec.build_proof_refs),
+        format!("evidence:build-proof:{}", spec.service_id),
+    ));
+    slot_postures.push(target_slot_from_optional_ref(
+        "slot:project-work",
+        first_ref(&project_input_refs(spec)),
+        format!("evidence:project-work:{}", spec.service_id),
     ));
     slot_postures.push(target_slot_from_optional_ref(
         "slot:release",
@@ -1355,20 +1486,27 @@ pub fn build_contract_target_registry_posture_for_spec(
         .to_string(),
         slot_postures,
         candidate_fulfillment_refs,
-        source_refs: spec.app_contract_ref.clone().into_iter().collect(),
-        build_refs: spec.build_ref.clone().into_iter().collect(),
+        source_refs: source_input_refs(spec),
+        build_refs: build_input_refs(spec),
         adapter_refs: if spec.host_adapter_ref.trim().is_empty() {
             Vec::new()
         } else {
             vec![spec.host_adapter_ref.clone()]
         },
         proof_requirement_refs: vec!["proof-requirement:service-manager:lifecycle".to_string()],
-        proof_refs: vec![format!("proof:operation:{}", operation.operation_id)],
+        proof_refs: {
+            let mut refs = vec![format!("proof:operation:{}", operation.operation_id)];
+            refs.extend(spec.build_proof_refs.clone());
+            refs
+        },
         evidence_refs: vec![format!("evidence:target-registry:{}", spec.service_id)],
         blocked_reasons: top_blockers,
         safe_facts: json!({
             "serviceId": spec.service_id,
-            "operation": operation.operation
+            "operation": operation.operation,
+            "sourceInputRefs": source_input_refs(spec),
+            "buildInputRefs": build_input_refs(spec),
+            "projectInputRefs": project_input_refs(spec)
         }),
         observed_at,
         expires_at: Some(observed_at + 3600),
@@ -1790,6 +1928,12 @@ pub fn reduce_service_manager_posture_for_spec(
             "appContractRef": spec.app_contract_ref,
             "version": spec.version,
             "buildRef": spec.build_ref,
+            "contentIndexRefs": spec.content_index_refs,
+            "sourceGraphRefs": spec.source_graph_refs,
+            "sourceSnapshotRefs": spec.source_snapshot_refs,
+            "projectRefs": spec.project_refs,
+            "workItemRefs": spec.work_item_refs,
+            "buildProofRefs": spec.build_proof_refs,
             "releaseRef": spec.release_ref,
             "rollbackRef": spec.rollback_ref,
             "rollbackRequired": spec.rollback_required,
@@ -1926,6 +2070,12 @@ pub fn reduce_protected_service_manager_posture(
         "appContractRef": release_contract.app_contract_ref,
         "version": release_contract.version,
         "buildRef": release_contract.build_ref,
+        "contentIndexRefs": release_contract.content_index_refs,
+        "sourceGraphRefs": release_contract.source_graph_refs,
+        "sourceSnapshotRefs": release_contract.source_snapshot_refs,
+        "projectRefs": release_contract.project_refs,
+        "workItemRefs": release_contract.work_item_refs,
+        "buildProofRefs": release_contract.build_proof_refs,
         "releaseRef": release_contract.release_ref,
         "rollbackRef": release_contract.rollback_ref,
         "rollbackRequired": release_contract.rollback_required.unwrap_or(true),
@@ -2368,6 +2518,12 @@ fn initial_service_manager_posture(
             "appContractRef": spec.app_contract_ref,
             "version": spec.version,
             "buildRef": spec.build_ref,
+            "contentIndexRefs": spec.content_index_refs,
+            "sourceGraphRefs": spec.source_graph_refs,
+            "sourceSnapshotRefs": spec.source_snapshot_refs,
+            "projectRefs": spec.project_refs,
+            "workItemRefs": spec.work_item_refs,
+            "buildProofRefs": spec.build_proof_refs,
             "releaseRef": spec.release_ref,
             "rollbackRef": spec.rollback_ref,
             "rollbackRequired": spec.rollback_required,
