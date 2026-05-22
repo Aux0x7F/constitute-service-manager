@@ -26,6 +26,8 @@ fn lifecycle_fixture_covers_manager_operations() {
     assert_eq!(fixture.proof_digests.len(), 10);
     assert_eq!(fixture.lab_proofs.len(), 1);
     assert_eq!(fixture.train_digests.len(), 1);
+    assert_eq!(fixture.contract_targets.len(), 1);
+    assert_eq!(fixture.target_registry_postures.len(), 1);
     assert_eq!(fixture.host_fabric_contributions.len(), 1);
     assert_eq!(fixture.lifecycle_plans.len(), 1);
     assert_eq!(fixture.host_fabric_fulfillment_plans.len(), 1);
@@ -49,6 +51,19 @@ fn lifecycle_fixture_covers_manager_operations() {
     assert_eq!(
         fixture.host_fabric_fulfillment_plans[0].state,
         constitute_protocol::FABRIC_FULFILLMENT_PLAN_READY
+    );
+    assert_eq!(
+        fixture.contract_targets[0].state,
+        constitute_protocol::FABRIC_CONTRACT_TARGET_READY
+    );
+    assert_eq!(
+        fixture.target_registry_postures[0].state,
+        constitute_protocol::FABRIC_CONTRACT_TARGET_REGISTRY_READY
+    );
+    assert!(
+        fixture.host_fabric_fulfillment_plans[0]
+            .evidence_refs
+            .contains(&fixture.target_registry_postures[0].registry_ref)
     );
 
     let release = fixture
@@ -115,6 +130,8 @@ fn protected_posture_blocks_missing_lifecycle_proof() {
             proof_digests: vec![],
             lab_proofs: vec![],
             train_digests: vec![],
+            contract_targets: vec![],
+            target_registry_postures: vec![],
             host_fabric_contributions: vec![],
             lifecycle_plans: vec![],
             host_fabric_fulfillment_plans: vec![],
@@ -276,6 +293,8 @@ fn dry_run_operation_persists_state_and_reduces_posture() {
     assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED);
     assert_eq!(state.operations.len(), 1);
     assert_eq!(state.proof_digests.len(), 1);
+    assert_eq!(state.contract_targets.len(), 1);
+    assert_eq!(state.target_registry_postures.len(), 1);
     assert_eq!(state.host_fabric_contributions.len(), 1);
     assert_eq!(state.lifecycle_plans.len(), 1);
     assert_eq!(state.host_fabric_fulfillment_plans.len(), 1);
@@ -288,6 +307,14 @@ fn dry_run_operation_persists_state_and_reduces_posture() {
     assert_eq!(
         outcome.host_fabric_fulfillment_plan.state,
         constitute_protocol::FABRIC_FULFILLMENT_PLAN_READY
+    );
+    assert_eq!(
+        outcome.contract_target.state,
+        constitute_protocol::FABRIC_CONTRACT_TARGET_READY
+    );
+    assert_eq!(
+        outcome.target_registry_posture.state,
+        constitute_protocol::FABRIC_CONTRACT_TARGET_REGISTRY_READY
     );
     assert_eq!(
         outcome.operation_posture.subject_ref,
@@ -323,6 +350,46 @@ fn operation_blocks_when_secret_boundary_is_unresolved() {
         SERVICE_MANAGER_PROOF_STATE_BLOCKED
     );
     assert_eq!(outcome.posture.state, SERVICE_MANAGER_POSTURE_BLOCKED);
+}
+
+#[test]
+fn target_reduction_blocks_missing_runner_slot_before_host_fabric_ready() {
+    let mut state = default_manager_state(DEFAULT_NOW);
+    state.services[0].runner_ref = None;
+
+    let outcome = apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: SERVICE_MANAGER_OPERATION_START.to_string(),
+            requested_at: DEFAULT_NOW + 25,
+            dry_run: true,
+            blocked_reason: None,
+        },
+    )
+    .expect("apply missing-runner operation");
+
+    assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_BLOCKED);
+    assert_eq!(
+        outcome.contract_target.state,
+        constitute_protocol::FABRIC_CONTRACT_TARGET_BLOCKED
+    );
+    assert!(
+        outcome
+            .contract_target
+            .missing_slot_refs
+            .contains(&"slot:runner".to_string())
+    );
+    assert_eq!(
+        outcome.target_registry_posture.state,
+        constitute_protocol::FABRIC_CONTRACT_TARGET_REGISTRY_BLOCKED
+    );
+    assert!(
+        outcome
+            .host_fabric_fulfillment_plan
+            .missing_role_refs
+            .contains(&"slot:runner".to_string())
+    );
 }
 
 #[test]
