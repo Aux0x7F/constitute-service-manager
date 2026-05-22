@@ -81,6 +81,53 @@ fn lifecycle_fixture_covers_manager_operations() {
             .evidence_refs
             .contains(&fixture.target_registry_postures[0].registry_ref)
     );
+    assert!(
+        fixture
+            .release_contract
+            .content_index_refs
+            .contains(&"content-index:source:lab-service".to_string())
+    );
+    assert!(
+        fixture
+            .release_contract
+            .source_snapshot_refs
+            .contains(&"source:snapshot:lab-service:current".to_string())
+    );
+    assert!(
+        fixture
+            .release_contract
+            .project_refs
+            .contains(&"project:constituency".to_string())
+    );
+    assert!(
+        fixture.host_fabric_contributions[0]
+            .input_refs
+            .contains(&"source:snapshot:lab-service:current".to_string())
+    );
+    assert!(
+        fixture.host_fabric_contributions[0]
+            .input_refs
+            .contains(&"build-proof:lab-service:current".to_string())
+    );
+    assert!(
+        fixture.target_registry_postures[0]
+            .source_refs
+            .contains(&"content-index:source:lab-service".to_string())
+    );
+    assert!(
+        fixture.target_registry_postures[0]
+            .build_refs
+            .contains(&"build-proof:lab-service:current".to_string())
+    );
+    let content_index_slot = fixture.target_registry_postures[0]
+        .slot_postures
+        .iter()
+        .find(|slot| slot.slot_ref == "slot:content-index")
+        .expect("content-index slot");
+    assert_eq!(
+        content_index_slot.state,
+        constitute_protocol::FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE
+    );
 
     let release = fixture
         .operations
