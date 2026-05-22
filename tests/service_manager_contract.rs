@@ -425,6 +425,7 @@ fn dry_run_operation_persists_state_and_reduces_posture() {
             requested_at: DEFAULT_NOW + 10,
             dry_run: true,
             blocked_reason: None,
+            fabric_control_role: None,
         },
     )
     .expect("apply operation");
@@ -462,6 +463,124 @@ fn dry_run_operation_persists_state_and_reduces_posture() {
 }
 
 #[test]
+fn fabric_control_role_blocks_without_existing_fulfillment_plan() {
+    let mut state = default_manager_state(DEFAULT_NOW);
+    let outcome = apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: SERVICE_MANAGER_OPERATION_START.to_string(),
+            requested_at: DEFAULT_NOW + 12,
+            dry_run: true,
+            blocked_reason: None,
+            fabric_control_role: Some(FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER.to_string()),
+        },
+    )
+    .expect("apply fabric-controlled operation");
+
+    assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_BLOCKED);
+    assert_eq!(outcome.fabric_control_decision.state, "blocked");
+    assert_eq!(
+        outcome.fabric_control_decision.role_ref.as_deref(),
+        Some("role:hostServiceAdapter")
+    );
+    assert!(
+        outcome
+            .blocked_reasons
+            .contains(&"hostFabric:controlPlanMissing:role:hostServiceAdapter".to_string())
+    );
+}
+
+#[test]
+fn fabric_control_role_allows_operation_when_latest_plan_is_ready() {
+    let mut state = default_manager_state(DEFAULT_NOW);
+    let warmup = apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: SERVICE_MANAGER_OPERATION_START.to_string(),
+            requested_at: DEFAULT_NOW + 14,
+            dry_run: true,
+            blocked_reason: None,
+            fabric_control_role: None,
+        },
+    )
+    .expect("warm up fabric plan");
+    let outcome = apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: SERVICE_MANAGER_OPERATION_RESTART.to_string(),
+            requested_at: DEFAULT_NOW + 18,
+            dry_run: true,
+            blocked_reason: None,
+            fabric_control_role: Some(FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER.to_string()),
+        },
+    )
+    .expect("apply fabric-controlled operation");
+
+    assert_eq!(
+        warmup.host_fabric_fulfillment_plan.state,
+        FABRIC_FULFILLMENT_PLAN_READY
+    );
+    assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED);
+    assert_eq!(outcome.fabric_control_decision.state, "ready");
+    assert_eq!(
+        outcome.fabric_control_decision.source_plan_ref.as_deref(),
+        Some(warmup.host_fabric_fulfillment_plan.plan_id.as_str())
+    );
+}
+
+#[test]
+fn fabric_control_role_blocks_operation_when_latest_plan_is_blocked() {
+    let mut state = default_manager_state(DEFAULT_NOW);
+    apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: SERVICE_MANAGER_OPERATION_START.to_string(),
+            requested_at: DEFAULT_NOW + 22,
+            dry_run: true,
+            blocked_reason: None,
+            fabric_control_role: None,
+        },
+    )
+    .expect("warm up fabric plan");
+    let plan = state
+        .host_fabric_fulfillment_plans
+        .last_mut()
+        .expect("fabric plan");
+    plan.state = FABRIC_FULFILLMENT_PLAN_BLOCKED.to_string();
+    plan.blocked_reasons = vec!["hostFabric:missingRole:role:gatewayAssociation".to_string()];
+
+    let outcome = apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: SERVICE_MANAGER_OPERATION_RESTART.to_string(),
+            requested_at: DEFAULT_NOW + 28,
+            dry_run: true,
+            blocked_reason: None,
+            fabric_control_role: Some(FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER.to_string()),
+        },
+    )
+    .expect("apply fabric-controlled operation");
+
+    assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_BLOCKED);
+    assert_eq!(outcome.fabric_control_decision.state, "blocked");
+    assert!(
+        outcome
+            .blocked_reasons
+            .contains(&"hostFabric:controlBlocked:role:hostServiceAdapter".to_string())
+    );
+    assert!(
+        outcome
+            .blocked_reasons
+            .contains(&"hostFabric:missingRole:role:gatewayAssociation".to_string())
+    );
+}
+
+#[test]
 fn operation_blocks_when_secret_boundary_is_unresolved() {
     let mut state = default_manager_state(DEFAULT_NOW);
     state.services[0].secret_refs.clear();
@@ -474,6 +593,7 @@ fn operation_blocks_when_secret_boundary_is_unresolved() {
             requested_at: DEFAULT_NOW + 20,
             dry_run: true,
             blocked_reason: None,
+            fabric_control_role: None,
         },
     )
     .expect("apply blocked operation");
@@ -504,6 +624,7 @@ fn target_reduction_blocks_missing_runner_slot_before_host_fabric_ready() {
             requested_at: DEFAULT_NOW + 25,
             dry_run: true,
             blocked_reason: None,
+            fabric_control_role: None,
         },
     )
     .expect("apply missing-runner operation");
@@ -544,6 +665,7 @@ fn promote_blocks_when_rollback_required_but_unavailable() {
             requested_at: DEFAULT_NOW + 30,
             dry_run: true,
             blocked_reason: None,
+            fabric_control_role: None,
         },
     )
     .expect("apply blocked promote");
@@ -589,6 +711,7 @@ fn state_file_roundtrips_through_cli_contract_helpers() {
             requested_at: DEFAULT_NOW + 50,
             dry_run: true,
             blocked_reason: None,
+            fabric_control_role: None,
         },
     )
     .expect("apply operation");
@@ -631,6 +754,30 @@ fn cli_run_and_status_roundtrip_state_file() {
     let outcome: constitute_service_manager::ServiceOperationOutcome =
         serde_json::from_slice(&run.stdout).expect("outcome json");
     assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED);
+
+    let controlled_run =
+        std::process::Command::new(env!("CARGO_BIN_EXE_constitute-service-manager"))
+            .args([
+                "run",
+                "--state",
+                &path_arg,
+                "--operation",
+                SERVICE_MANAGER_OPERATION_RESTART,
+                "--at",
+                "1700000150",
+                "--fabric-control-role",
+                FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
+            ])
+            .output()
+            .expect("run controlled cli");
+    assert!(controlled_run.status.success());
+    let controlled_outcome: constitute_service_manager::ServiceOperationOutcome =
+        serde_json::from_slice(&controlled_run.stdout).expect("controlled outcome json");
+    assert_eq!(controlled_outcome.fabric_control_decision.state, "ready");
+    assert_eq!(
+        controlled_outcome.state,
+        SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED
+    );
 
     let status = std::process::Command::new(env!("CARGO_BIN_EXE_constitute-service-manager"))
         .args(["status", "--state", &path_arg, "--at", "1700000200"])

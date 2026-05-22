@@ -61,6 +61,9 @@ fn main() -> Result<()> {
                 requested_at,
                 dry_run: !args.iter().any(|arg| arg == "--execute"),
                 blocked_reason: read_option(&args, "--blocked").map(str::to_string),
+                fabric_control_role: read_option(&args, "--fabric-control-role")
+                    .or_else(|| read_option(&args, "--control-role"))
+                    .map(str::to_string),
             };
             let outcome = apply_service_operation(&mut state, request)?;
             save_manager_state(path, &state)?;
@@ -92,6 +95,6 @@ fn read_u64_option(args: &[String], name: &str) -> Option<u64> {
 
 fn print_help() {
     println!(
-        "constitute-service-manager\n\nCommands:\n  fixture lifecycle\n  operation --operation <name> --state <state> [--blocked <reason>]\n  init --state <path> [--at <time>]\n  run --state <path> --operation <name> [--service <id>] [--at <time>] [--blocked <reason>] [--execute]\n  status --state <path> [--service <id>] [--at <time>]\n"
+        "constitute-service-manager\n\nCommands:\n  fixture lifecycle\n  operation --operation <name> --state <state> [--blocked <reason>]\n  init --state <path> [--at <time>]\n  run --state <path> --operation <name> [--service <id>] [--at <time>] [--blocked <reason>] [--fabric-control-role <role>] [--execute]\n  status --state <path> [--service <id>] [--at <time>]\n"
     );
 }

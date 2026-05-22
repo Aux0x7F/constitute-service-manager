@@ -10,6 +10,11 @@ It does not own service domain semantics. Services own domain execution;
 protocol owns record grammar; fabric reduces host composition; the service
 manager owns corporeal lifecycle coordination and proof posture.
 
+Fabric fulfillment plans can now be consumed as a role-scoped control preflight
+for service-manager operations. This lets host-fabric posture approve, block,
+or degrade a start/stop/update/proof decision without moving OS effects or
+service-domain semantics into fabric.
+
 ## Commands
 
 ```powershell
@@ -18,5 +23,6 @@ cargo run -- fixture lifecycle
 cargo run -- operation --operation restart --state succeeded
 cargo run -- init --state target/service-manager-state.json
 cargo run -- run --state target/service-manager-state.json --operation start
+cargo run -- run --state target/service-manager-state.json --operation restart --fabric-control-role hostServiceAdapter
 cargo run -- status --state target/service-manager-state.json
 ```

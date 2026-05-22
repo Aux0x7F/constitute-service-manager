@@ -154,6 +154,7 @@ pub struct ServiceOperationRequest {
     pub requested_at: u64,
     pub dry_run: bool,
     pub blocked_reason: Option<String>,
+    pub fabric_control_role: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -172,7 +173,22 @@ pub struct ServiceOperationOutcome {
     pub host_fabric_contribution: Option<HostFabricMemberContribution>,
     pub lifecycle_plan: LifecyclePlanPosture,
     pub host_fabric_fulfillment_plan: HostFabricFulfillmentPlan,
+    pub fabric_control_decision: FabricControlDecision,
     pub posture: ServiceManagerPostureRecord,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FabricControlDecision {
+    pub role_ref: Option<String>,
+    pub state: String,
+    pub source_plan_ref: Option<String>,
+    pub plan_state: Option<String>,
+    #[serde(default)]
+    pub blocked_reasons: Vec<String>,
+    #[serde(default)]
+    pub evidence_refs: Vec<String>,
+    pub observed_at: u64,
 }
 
 fn default_fabric_ref() -> String {
@@ -1678,7 +1694,9 @@ pub fn apply_service_operation(
         .ok_or_else(|| anyhow!("managed service not found: {}", request.service_id))?
         .clone();
     validate_supported_operation(&request.operation)?;
+    let fabric_control_decision = reduce_fabric_control_decision(state, &spec, &request)?;
     let mut blocked_reasons = operation_blocked_reasons(&spec, &request);
+    blocked_reasons.extend(fabric_control_decision.blocked_reasons.clone());
     blocked_reasons.sort();
     blocked_reasons.dedup();
 
@@ -1780,6 +1798,7 @@ pub fn apply_service_operation(
         host_fabric_contribution,
         lifecycle_plan,
         host_fabric_fulfillment_plan,
+        fabric_control_decision,
         posture,
     })
 }
@@ -1854,6 +1873,102 @@ fn operation_blocked_reasons(
         blocked_reasons.push("lifecycleContractRef:missing".to_string());
     }
     blocked_reasons
+}
+
+fn reduce_fabric_control_decision(
+    state: &ServiceManagerState,
+    spec: &ManagedServiceSpec,
+    request: &ServiceOperationRequest,
+) -> Result<FabricControlDecision> {
+    let Some(role) = request.fabric_control_role.as_deref() else {
+        return Ok(FabricControlDecision {
+            role_ref: None,
+            state: "notRequested".to_string(),
+            source_plan_ref: None,
+            plan_state: None,
+            blocked_reasons: vec![],
+            evidence_refs: vec!["evidence:fabric-control:not-requested".to_string()],
+            observed_at: request.requested_at,
+        });
+    };
+    let role_ref = fabric_role_ref(role);
+    let host_ref = spec.host_ref.as_deref().unwrap_or_default();
+    let latest_plan = state
+        .host_fabric_fulfillment_plans
+        .iter()
+        .rev()
+        .find(|plan| {
+            plan.fabric_ref == spec.fabric_ref
+                && plan.host_ref == host_ref
+                && plan.required_role_refs.contains(&role_ref)
+        });
+    let Some(plan) = latest_plan else {
+        let blocked = vec![format!("hostFabric:controlPlanMissing:{role_ref}")];
+        return Ok(FabricControlDecision {
+            role_ref: Some(role_ref),
+            state: "blocked".to_string(),
+            source_plan_ref: None,
+            plan_state: None,
+            blocked_reasons: blocked,
+            evidence_refs: vec!["evidence:fabric-control:missing-plan".to_string()],
+            observed_at: request.requested_at,
+        });
+    };
+    validate_host_fabric_fulfillment_plan(plan)?;
+    let mut blocked_reasons = Vec::new();
+    if plan
+        .expires_at
+        .is_some_and(|expires_at| expires_at <= request.requested_at)
+    {
+        blocked_reasons.push(format!("hostFabric:controlPlanExpired:{}", plan.plan_id));
+    }
+    if plan.missing_role_refs.contains(&role_ref) {
+        blocked_reasons.push(format!("hostFabric:controlRoleMissing:{role_ref}"));
+    }
+    match plan.state.as_str() {
+        FABRIC_FULFILLMENT_PLAN_READY => {}
+        FABRIC_FULFILLMENT_PLAN_DEGRADED => {
+            blocked_reasons.push(format!("hostFabric:controlDegraded:{role_ref}"));
+        }
+        FABRIC_FULFILLMENT_PLAN_BLOCKED => {
+            blocked_reasons.push(format!("hostFabric:controlBlocked:{role_ref}"));
+            blocked_reasons.extend(plan.blocked_reasons.clone());
+        }
+        other => {
+            blocked_reasons.push(format!("hostFabric:controlUnknown:{role_ref}:{other}"));
+        }
+    }
+    blocked_reasons.sort();
+    blocked_reasons.dedup();
+    let state = if blocked_reasons.is_empty() {
+        "ready"
+    } else if plan.state == FABRIC_FULFILLMENT_PLAN_DEGRADED {
+        "degraded"
+    } else {
+        "blocked"
+    };
+    let mut evidence_refs = plan.evidence_refs.clone();
+    evidence_refs.push(format!("evidence:fabric-control:{}", plan.plan_id));
+    evidence_refs.sort();
+    evidence_refs.dedup();
+    Ok(FabricControlDecision {
+        role_ref: Some(role_ref),
+        state: state.to_string(),
+        source_plan_ref: Some(plan.plan_id.clone()),
+        plan_state: Some(plan.state.clone()),
+        blocked_reasons,
+        evidence_refs,
+        observed_at: request.requested_at,
+    })
+}
+
+fn fabric_role_ref(role: &str) -> String {
+    let trimmed = role.trim();
+    if trimmed.starts_with("role:") {
+        trimmed.to_string()
+    } else {
+        format!("role:{trimmed}")
+    }
 }
 
 fn secret_required_for(operation: &str) -> bool {
