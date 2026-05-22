@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use constitute_fabric::{HostFabricReductionInput, HostFabricRoleRequirement, reduce_host_fabric};
 use constitute_protocol::{
     ContractTarget, ContractTargetRegistryPosture, ContractTargetSlotPosture,
     FABRIC_CONTRACT_TARGET_BLOCKED, FABRIC_CONTRACT_TARGET_COMPATIBLE,
@@ -9,16 +10,15 @@ use constitute_protocol::{
     FABRIC_CONTRACT_TARGET_SLOT_BLOCKED, FABRIC_CONTRACT_TARGET_SLOT_MISSING,
     FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED, FABRIC_FULFILLMENT_PLAN_BLOCKED,
     FABRIC_FULFILLMENT_PLAN_DEGRADED, FABRIC_FULFILLMENT_PLAN_READY,
-    FABRIC_LIFECYCLE_PHASE_BLOCKED, FABRIC_LIFECYCLE_PHASE_BUILD,
-    FABRIC_LIFECYCLE_PHASE_CLEANUP, FABRIC_LIFECYCLE_PHASE_LOAD,
-    FABRIC_LIFECYCLE_PHASE_NOT_REQUIRED, FABRIC_LIFECYCLE_PHASE_OBSERVE,
-    FABRIC_LIFECYCLE_PHASE_READY, FABRIC_LIFECYCLE_PHASE_RELEASE, FABRIC_LIFECYCLE_PHASE_ROLLBACK,
-    FABRIC_LIFECYCLE_PHASE_RUN, FABRIC_LIFECYCLE_PHASE_RUNNING, FABRIC_LIFECYCLE_PHASE_SOURCE,
-    FABRIC_LIFECYCLE_PHASE_SUCCEEDED, FABRIC_LIFECYCLE_PLAN_BLOCKED, FABRIC_LIFECYCLE_PLAN_READY,
-    FABRIC_MEMBER_CONTRIBUTION_BLOCKED, FABRIC_MEMBER_CONTRIBUTION_RUNNING,
-    FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER, HostFabricFulfillmentPlan,
-    HostFabricMemberContribution, LifecyclePhasePosture, LifecyclePlanPosture,
-    RECORD_CONTRACT_TARGET, RECORD_CONTRACT_TARGET_REGISTRY_POSTURE,
+    FABRIC_LIFECYCLE_PHASE_BLOCKED, FABRIC_LIFECYCLE_PHASE_BUILD, FABRIC_LIFECYCLE_PHASE_CLEANUP,
+    FABRIC_LIFECYCLE_PHASE_LOAD, FABRIC_LIFECYCLE_PHASE_NOT_REQUIRED,
+    FABRIC_LIFECYCLE_PHASE_OBSERVE, FABRIC_LIFECYCLE_PHASE_READY, FABRIC_LIFECYCLE_PHASE_RELEASE,
+    FABRIC_LIFECYCLE_PHASE_ROLLBACK, FABRIC_LIFECYCLE_PHASE_RUN, FABRIC_LIFECYCLE_PHASE_RUNNING,
+    FABRIC_LIFECYCLE_PHASE_SOURCE, FABRIC_LIFECYCLE_PHASE_SUCCEEDED, FABRIC_LIFECYCLE_PLAN_BLOCKED,
+    FABRIC_LIFECYCLE_PLAN_READY, FABRIC_MEMBER_CONTRIBUTION_BLOCKED,
+    FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
+    HostFabricFulfillmentPlan, HostFabricMemberContribution, LifecyclePhasePosture,
+    LifecyclePlanPosture, RECORD_CONTRACT_TARGET, RECORD_CONTRACT_TARGET_REGISTRY_POSTURE,
     RECORD_HOST_FABRIC_FULFILLMENT_PLAN, RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION,
     RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE, RECORD_SERVICE_MANAGER_LAB_PROOF,
     RECORD_SERVICE_MANAGER_OPERATION_POSTURE, RECORD_SERVICE_MANAGER_POSTURE,
@@ -37,9 +37,9 @@ use constitute_protocol::{
     ServiceManagerLabProofRecord, ServiceManagerOperationPostureRecord,
     ServiceManagerPostureRecord, ServiceManagerProofDigestRecord,
     ServiceManagerReleaseContractRecord, ServiceManagerSecretBoundaryRecord,
-    ServiceManagerTrainDigestRecord, validate_host_fabric_fulfillment_plan,
+    ServiceManagerTrainDigestRecord, validate_contract_target,
+    validate_contract_target_registry_posture, validate_host_fabric_fulfillment_plan,
     validate_host_fabric_member_contribution, validate_lifecycle_plan_posture,
-    validate_contract_target, validate_contract_target_registry_posture,
     validate_service_manager_lab_proof, validate_service_manager_operation_posture,
     validate_service_manager_posture, validate_service_manager_proof_digest,
     validate_service_manager_release_contract, validate_service_manager_secret_boundary,
@@ -1133,6 +1133,55 @@ pub fn build_host_fabric_fulfillment_plan_for_spec_with_target(
     Ok(plan)
 }
 
+pub fn reduce_host_fabric_fulfillment_plan_for_spec(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+    host_fabric_contributions: &[HostFabricMemberContribution],
+    lifecycle_plans: &[LifecyclePlanPosture],
+    observed_at: u64,
+    blocked_reasons: Vec<String>,
+    target_registry_posture: Option<&ContractTargetRegistryPosture>,
+) -> Result<HostFabricFulfillmentPlan> {
+    let mut blocked_reasons = blocked_reasons;
+    blocked_reasons.extend(host_fabric_contract_blockers(spec));
+    if let Some(registry) = target_registry_posture {
+        validate_contract_target_registry_posture(registry)?;
+        blocked_reasons.extend(target_registry_blockers(registry));
+    }
+    let materialization_budget_refs = if spec.materialization_budget_refs.is_empty() {
+        vec!["materialization-budget:service-manager".to_string()]
+    } else {
+        spec.materialization_budget_refs.clone()
+    };
+    let known_missing_role_refs = target_registry_posture
+        .map(target_registry_missing_slot_refs)
+        .unwrap_or_default();
+    let mut evidence_refs = vec![format!("evidence:host-fabric-plan:{}", spec.service_id)];
+    if let Some(registry) = target_registry_posture {
+        evidence_refs.push(registry.registry_ref.clone());
+    }
+    let reduction = reduce_host_fabric(HostFabricReductionInput {
+        plan_id: host_fabric_fulfillment_plan_id(spec, operation),
+        fabric_ref: spec.fabric_ref.clone(),
+        host_ref: spec.host_ref.clone().unwrap_or_default(),
+        contract_ref: spec.host_adapter_ref.clone(),
+        required_roles: vec![HostFabricRoleRequirement {
+            role_ref: format!("role:{FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER}"),
+            min_ready: 1,
+        }],
+        contributions: host_fabric_contributions.to_vec(),
+        lifecycle_plans: lifecycle_plans.to_vec(),
+        materialization_budget_refs,
+        known_missing_role_refs,
+        evidence_refs,
+        blocked_reasons,
+        association_handoff_ref: spec.association_handoff_ref.clone(),
+        observed_at,
+        expires_at: Some(observed_at + 3600),
+    })?;
+    Ok(reduction.fulfillment_plan)
+}
+
 fn target_registry_blockers(registry: &ContractTargetRegistryPosture) -> Vec<String> {
     let mut blockers = registry.blocked_reasons.clone();
     for slot in &registry.slot_postures {
@@ -1688,11 +1737,15 @@ pub fn apply_service_operation(
         request.requested_at + 105,
         blocked_reasons.clone(),
     )?;
-    let host_fabric_fulfillment_plan = build_host_fabric_fulfillment_plan_for_spec_with_target(
+    let host_fabric_contributions = host_fabric_contribution
+        .clone()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let host_fabric_fulfillment_plan = reduce_host_fabric_fulfillment_plan_for_spec(
         &spec,
         &operation_posture,
-        member_contribution_refs,
-        vec![lifecycle_plan.lifecycle_plan_id.clone()],
+        &host_fabric_contributions,
+        std::slice::from_ref(&lifecycle_plan),
         request.requested_at + 110,
         blocked_reasons.clone(),
         Some(&target_registry_posture),
@@ -2001,11 +2054,11 @@ pub fn service_manager_lifecycle_fixture(issued_at: u64) -> Result<ServiceManage
         issued_at + 5015,
         vec![],
     )?;
-    let host_fabric_fulfillment_plan = build_host_fabric_fulfillment_plan_for_spec_with_target(
+    let host_fabric_fulfillment_plan = reduce_host_fabric_fulfillment_plan_for_spec(
         &spec,
         &lifecycle_operation,
-        vec![host_fabric_contribution.contribution_id.clone()],
-        vec![lifecycle_plan.lifecycle_plan_id.clone()],
+        std::slice::from_ref(&host_fabric_contribution),
+        std::slice::from_ref(&lifecycle_plan),
         issued_at + 5020,
         vec![],
         Some(&target_registry_posture),
@@ -2116,11 +2169,11 @@ pub fn blocked_operation_fixture(
         requested_at + 235,
         vec![reason.to_string()],
     )?;
-    let host_fabric_fulfillment_plan = build_host_fabric_fulfillment_plan_for_spec_with_target(
+    let host_fabric_fulfillment_plan = reduce_host_fabric_fulfillment_plan_for_spec(
         &spec,
         &operation,
-        member_contribution_refs,
-        vec![lifecycle_plan.lifecycle_plan_id.clone()],
+        &host_fabric_contribution,
+        std::slice::from_ref(&lifecycle_plan),
         requested_at + 240,
         vec![reason.to_string()],
         Some(&target_registry_posture),

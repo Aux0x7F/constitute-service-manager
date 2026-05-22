@@ -85,6 +85,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "constitute-fabric"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "constitute-protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "constitute-protocol"
 version = "0.1.0"
 dependencies = [
@@ -105,6 +115,7 @@ name = "constitute-service-manager"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "constitute-fabric",
  "constitute-protocol",
  "serde",
  "serde_json",
