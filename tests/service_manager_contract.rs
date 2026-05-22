@@ -1,12 +1,19 @@
+use constitute_fabric::{
+    HostFabricMemberContributionSpec, HostFabricReductionInput, HostFabricRoleRequirement,
+    HostFabricShadowParityInput, build_host_fabric_member_contribution,
+    reduce_host_fabric_shadow_parity,
+};
 use constitute_protocol::{
-    SERVICE_MANAGER_OPERATION_RELEASE, SERVICE_MANAGER_OPERATION_RESTART,
-    SERVICE_MANAGER_OPERATION_ROLLBACK, SERVICE_MANAGER_OPERATION_SECRET_READY,
-    SERVICE_MANAGER_OPERATION_START, SERVICE_MANAGER_OPERATION_STATE_BLOCKED,
-    SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED, SERVICE_MANAGER_POSTURE_BLOCKED,
-    SERVICE_MANAGER_POSTURE_READY, SERVICE_MANAGER_PROOF_STATE_BLOCKED,
-    SURFACE_SECRET_BOUNDARY_BLOCKED, validate_host_fabric_fulfillment_plan,
-    validate_host_fabric_member_contribution, validate_lifecycle_plan_posture,
-    validate_service_manager_operation_posture,
+    FABRIC_FULFILLMENT_PLAN_BLOCKED, FABRIC_FULFILLMENT_PLAN_READY,
+    FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION,
+    FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER, SERVICE_MANAGER_OPERATION_RELEASE,
+    SERVICE_MANAGER_OPERATION_RESTART, SERVICE_MANAGER_OPERATION_ROLLBACK,
+    SERVICE_MANAGER_OPERATION_SECRET_READY, SERVICE_MANAGER_OPERATION_START,
+    SERVICE_MANAGER_OPERATION_STATE_BLOCKED, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
+    SERVICE_MANAGER_POSTURE_BLOCKED, SERVICE_MANAGER_POSTURE_READY,
+    SERVICE_MANAGER_PROOF_STATE_BLOCKED, SURFACE_SECRET_BOUNDARY_BLOCKED,
+    validate_host_fabric_fulfillment_plan, validate_host_fabric_member_contribution,
+    validate_lifecycle_plan_posture, validate_service_manager_operation_posture,
 };
 use constitute_service_manager::{
     ServiceOperationRequest, apply_service_operation, blocked_operation_fixture,
@@ -18,6 +25,10 @@ use constitute_service_manager::{
 };
 
 const DEFAULT_NOW: u64 = 1_700_000_000;
+
+fn role_ref(role: &str) -> String {
+    format!("role:{role}")
+}
 
 #[test]
 fn lifecycle_fixture_covers_manager_operations() {
@@ -79,6 +90,134 @@ fn lifecycle_fixture_covers_manager_operations() {
         .find(|operation| operation.operation == SERVICE_MANAGER_OPERATION_ROLLBACK)
         .expect("rollback operation");
     assert!(rollback.rollback_ref.is_some());
+}
+
+#[test]
+fn shadow_fabric_parity_blocks_missing_legacy_ready_contributor() {
+    let fixture = service_manager_lifecycle_fixture(DEFAULT_NOW).expect("fixture");
+    let contribution = fixture.host_fabric_contributions[0].clone();
+    let parity = reduce_host_fabric_shadow_parity(HostFabricShadowParityInput {
+        reduction: HostFabricReductionInput {
+            plan_id: "fabric-plan:shadow:service-manager:gateway-gap".to_string(),
+            fabric_ref: contribution.fabric_ref.clone(),
+            host_ref: contribution.host_ref.clone(),
+            contract_ref: "contract:host-fabric.shadow-service-manager@0.1.0".to_string(),
+            required_roles: vec![
+                HostFabricRoleRequirement {
+                    role_ref: role_ref(FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER),
+                    min_ready: 1,
+                },
+                HostFabricRoleRequirement {
+                    role_ref: role_ref(FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION),
+                    min_ready: 1,
+                },
+            ],
+            contributions: vec![contribution],
+            lifecycle_plans: fixture.lifecycle_plans.clone(),
+            materialization_budget_refs: vec![
+                "materialization-budget:shadow-service-manager".to_string(),
+            ],
+            known_missing_role_refs: vec![],
+            evidence_refs: vec!["evidence:legacy-posture:service-manager".to_string()],
+            blocked_reasons: vec![],
+            association_handoff_ref: Some(
+                "handoff:substrate:lab-gateway:initial-owner".to_string(),
+            ),
+            observed_at: DEFAULT_NOW + 1_000,
+            expires_at: Some(DEFAULT_NOW + 3_600),
+        },
+        legacy_ready_role_refs: vec![
+            FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER.to_string(),
+            FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION.to_string(),
+        ],
+        legacy_blocked_role_refs: vec![],
+    })
+    .expect("shadow parity reduces");
+
+    assert_eq!(
+        parity.reduction.fulfillment_plan.state,
+        FABRIC_FULFILLMENT_PLAN_BLOCKED
+    );
+    assert!(parity.blocked_reasons.contains(&format!(
+        "hostFabric:legacyDisagreement:missingRole:{}",
+        role_ref(FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION)
+    )));
+    assert_eq!(fixture.posture.state, SERVICE_MANAGER_POSTURE_READY);
+}
+
+#[test]
+fn shadow_fabric_parity_accepts_current_contribution_knot_without_control_change() {
+    let fixture = service_manager_lifecycle_fixture(DEFAULT_NOW).expect("fixture");
+    let service_contribution = fixture.host_fabric_contributions[0].clone();
+    let gateway_contribution =
+        build_host_fabric_member_contribution(HostFabricMemberContributionSpec {
+            contribution_id: "fabric-contribution:gatewayAssociation:shadow".to_string(),
+            fabric_ref: service_contribution.fabric_ref.clone(),
+            host_ref: service_contribution.host_ref.clone(),
+            member_ref: "4a29ff60c5c3837e9e20555bfeb2a046be3eb140818144628691fcf7efb1d2f1"
+                .to_string(),
+            role: FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION.to_string(),
+            state: FABRIC_MEMBER_CONTRIBUTION_RUNNING.to_string(),
+            contract_ref: "contract:gateway.association@0.1.0".to_string(),
+            subject_ref: "gateway:lab".to_string(),
+            capability_refs: vec!["capability:gateway.association.fulfill".to_string()],
+            grant_refs: vec!["grant:gateway.association:lab".to_string()],
+            input_refs: vec!["target:local-workstation:dev".to_string()],
+            output_refs: vec!["gateway:lab".to_string()],
+            evidence_refs: vec!["evidence:gateway.association:shadow".to_string()],
+            lifecycle_plan_refs: vec![],
+            release_refs: vec![],
+            resource_posture: None,
+            blocked_reasons: vec![],
+            safe_facts: serde_json::json!({ "fixture": "gateway-association-shadow" }),
+            observed_at: DEFAULT_NOW + 1_000,
+            expires_at: Some(DEFAULT_NOW + 3_600),
+        })
+        .expect("gateway contribution");
+    let parity = reduce_host_fabric_shadow_parity(HostFabricShadowParityInput {
+        reduction: HostFabricReductionInput {
+            plan_id: "fabric-plan:shadow:service-manager:ready".to_string(),
+            fabric_ref: service_contribution.fabric_ref.clone(),
+            host_ref: service_contribution.host_ref.clone(),
+            contract_ref: "contract:host-fabric.shadow-service-manager@0.1.0".to_string(),
+            required_roles: vec![
+                HostFabricRoleRequirement {
+                    role_ref: role_ref(FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER),
+                    min_ready: 1,
+                },
+                HostFabricRoleRequirement {
+                    role_ref: role_ref(FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION),
+                    min_ready: 1,
+                },
+            ],
+            contributions: vec![service_contribution, gateway_contribution],
+            lifecycle_plans: fixture.lifecycle_plans.clone(),
+            materialization_budget_refs: vec![
+                "materialization-budget:shadow-service-manager".to_string(),
+            ],
+            known_missing_role_refs: vec![],
+            evidence_refs: vec!["evidence:legacy-posture:service-manager".to_string()],
+            blocked_reasons: vec![],
+            association_handoff_ref: Some(
+                "handoff:substrate:lab-gateway:initial-owner".to_string(),
+            ),
+            observed_at: DEFAULT_NOW + 1_000,
+            expires_at: Some(DEFAULT_NOW + 3_600),
+        },
+        legacy_ready_role_refs: vec![
+            FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER.to_string(),
+            FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION.to_string(),
+        ],
+        legacy_blocked_role_refs: vec![],
+    })
+    .expect("shadow parity reduces");
+
+    assert_eq!(
+        parity.reduction.fulfillment_plan.state,
+        FABRIC_FULFILLMENT_PLAN_READY
+    );
+    assert!(parity.disagreement_role_refs.is_empty());
+    assert_eq!(fixture.posture.state, SERVICE_MANAGER_POSTURE_READY);
 }
 
 #[test]
