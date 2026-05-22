@@ -1,6 +1,28 @@
 use anyhow::{Result, anyhow};
+use constitute_fabric::{HostFabricReductionInput, HostFabricRoleRequirement, reduce_host_fabric};
 use constitute_protocol::{
-    RECORD_RESOURCE_POSTURE, RECORD_SERVICE_MANAGER_LAB_PROOF,
+    ContractTarget, ContractTargetRegistryPosture, ContractTargetSlotPosture,
+    FABRIC_CONTRACT_TARGET_BLOCKED, FABRIC_CONTRACT_TARGET_COMPATIBILITY_DEGRADED,
+    FABRIC_CONTRACT_TARGET_COMPATIBLE, FABRIC_CONTRACT_TARGET_INCOMPATIBLE,
+    FABRIC_CONTRACT_TARGET_PLATFORM_FIT_COMPATIBLE, FABRIC_CONTRACT_TARGET_PLATFORM_FIT_DEGRADED,
+    FABRIC_CONTRACT_TARGET_PLATFORM_FIT_UNKNOWN, FABRIC_CONTRACT_TARGET_READY,
+    FABRIC_CONTRACT_TARGET_REGISTRY_BLOCKED, FABRIC_CONTRACT_TARGET_REGISTRY_DEGRADED,
+    FABRIC_CONTRACT_TARGET_REGISTRY_READY, FABRIC_CONTRACT_TARGET_SELECTED,
+    FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE, FABRIC_CONTRACT_TARGET_SLOT_BLOCKED,
+    FABRIC_CONTRACT_TARGET_SLOT_DEGRADED, FABRIC_CONTRACT_TARGET_SLOT_MISSING,
+    FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED, FABRIC_FULFILLMENT_PLAN_BLOCKED,
+    FABRIC_FULFILLMENT_PLAN_DEGRADED, FABRIC_FULFILLMENT_PLAN_READY,
+    FABRIC_LIFECYCLE_PHASE_BLOCKED, FABRIC_LIFECYCLE_PHASE_BUILD, FABRIC_LIFECYCLE_PHASE_CLEANUP,
+    FABRIC_LIFECYCLE_PHASE_LOAD, FABRIC_LIFECYCLE_PHASE_NOT_REQUIRED,
+    FABRIC_LIFECYCLE_PHASE_OBSERVE, FABRIC_LIFECYCLE_PHASE_READY, FABRIC_LIFECYCLE_PHASE_RELEASE,
+    FABRIC_LIFECYCLE_PHASE_ROLLBACK, FABRIC_LIFECYCLE_PHASE_RUN, FABRIC_LIFECYCLE_PHASE_RUNNING,
+    FABRIC_LIFECYCLE_PHASE_SOURCE, FABRIC_LIFECYCLE_PHASE_SUCCEEDED, FABRIC_LIFECYCLE_PLAN_BLOCKED,
+    FABRIC_LIFECYCLE_PLAN_READY, FABRIC_MEMBER_CONTRIBUTION_BLOCKED,
+    FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
+    HostFabricFulfillmentPlan, HostFabricMemberContribution, LifecyclePhasePosture,
+    LifecyclePlanPosture, RECORD_CONTRACT_TARGET, RECORD_CONTRACT_TARGET_REGISTRY_POSTURE,
+    RECORD_HOST_FABRIC_FULFILLMENT_PLAN, RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION,
+    RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE, RECORD_SERVICE_MANAGER_LAB_PROOF,
     RECORD_SERVICE_MANAGER_OPERATION_POSTURE, RECORD_SERVICE_MANAGER_POSTURE,
     RECORD_SERVICE_MANAGER_PROOF_DIGEST, RECORD_SERVICE_MANAGER_RELEASE_CONTRACT,
     RECORD_SERVICE_MANAGER_SECRET_BOUNDARY, RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture,
@@ -17,13 +39,16 @@ use constitute_protocol::{
     ServiceManagerLabProofRecord, ServiceManagerOperationPostureRecord,
     ServiceManagerPostureRecord, ServiceManagerProofDigestRecord,
     ServiceManagerReleaseContractRecord, ServiceManagerSecretBoundaryRecord,
-    ServiceManagerTrainDigestRecord, validate_service_manager_lab_proof,
-    validate_service_manager_operation_posture, validate_service_manager_posture,
-    validate_service_manager_proof_digest, validate_service_manager_release_contract,
-    validate_service_manager_secret_boundary, validate_service_manager_train_digest,
+    ServiceManagerTrainDigestRecord, validate_contract_target,
+    validate_contract_target_registry_posture, validate_host_fabric_fulfillment_plan,
+    validate_host_fabric_member_contribution, validate_lifecycle_plan_posture,
+    validate_service_manager_lab_proof, validate_service_manager_operation_posture,
+    validate_service_manager_posture, validate_service_manager_proof_digest,
+    validate_service_manager_release_contract, validate_service_manager_secret_boundary,
+    validate_service_manager_train_digest,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
 
@@ -33,6 +58,10 @@ pub const DEFAULT_MANAGER_REF: &str = "member:service-manager:lab";
 pub const DEFAULT_REQUESTER_REF: &str = "identity:operator";
 pub const DEFAULT_RUNNER_REF: &str =
     "4a29ff60c5c3837e9e20555bfeb2a046be3eb140818144628691fcf7efb1d2f1";
+pub const DEFAULT_FABRIC_REF: &str = "fabric:lab-gateway";
+pub const DEFAULT_HOST_ADAPTER_REF: &str = "contract:host-service-adapter.service-manager@0.1.0";
+pub const DEFAULT_LIFECYCLE_CONTRACT_REF: &str = "contract:lifecycle.host-service-adapter@0.1.0";
+pub const DEFAULT_ASSOCIATION_HANDOFF_REF: &str = "handoff:substrate:lab-gateway:initial-owner";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -45,7 +74,21 @@ pub struct ServiceManagerLifecycleFixture {
     pub proof_digests: Vec<ServiceManagerProofDigestRecord>,
     pub lab_proofs: Vec<ServiceManagerLabProofRecord>,
     pub train_digests: Vec<ServiceManagerTrainDigestRecord>,
+    pub contract_targets: Vec<ContractTarget>,
+    pub target_registry_postures: Vec<ContractTargetRegistryPosture>,
+    pub host_fabric_contributions: Vec<HostFabricMemberContribution>,
+    pub lifecycle_plans: Vec<LifecyclePlanPosture>,
+    pub host_fabric_fulfillment_plans: Vec<HostFabricFulfillmentPlan>,
     pub posture: ServiceManagerPostureRecord,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LabLinuxTargetFixture {
+    pub target: ContractTarget,
+    pub registry: ContractTargetRegistryPosture,
+    pub release_contract: ServiceManagerReleaseContractRecord,
+    pub protected_lab_proof: ServiceManagerLabProofRecord,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -58,6 +101,14 @@ pub struct ManagedServiceSpec {
     pub requester_ref: String,
     pub runner_ref: Option<String>,
     pub host_ref: Option<String>,
+    #[serde(default = "default_fabric_ref")]
+    pub fabric_ref: String,
+    #[serde(default = "default_host_adapter_ref")]
+    pub host_adapter_ref: String,
+    #[serde(default = "default_lifecycle_contract_ref")]
+    pub lifecycle_contract_ref: String,
+    #[serde(default = "default_association_handoff_ref")]
+    pub association_handoff_ref: Option<String>,
     pub app_contract_ref: Option<String>,
     pub version: Option<String>,
     pub build_ref: Option<String>,
@@ -74,6 +125,8 @@ pub struct ManagedServiceSpec {
     pub authority_refs: Vec<String>,
     #[serde(default)]
     pub grant_refs: Vec<String>,
+    #[serde(default)]
+    pub materialization_budget_refs: Vec<String>,
     pub resource_profile_ref: String,
     pub resource_memory_mib: u64,
     pub resource_cpu_pct: u64,
@@ -90,6 +143,16 @@ pub struct ServiceManagerState {
     pub operations: Vec<ServiceManagerOperationPostureRecord>,
     #[serde(default)]
     pub proof_digests: Vec<ServiceManagerProofDigestRecord>,
+    #[serde(default)]
+    pub contract_targets: Vec<ContractTarget>,
+    #[serde(default)]
+    pub target_registry_postures: Vec<ContractTargetRegistryPosture>,
+    #[serde(default)]
+    pub host_fabric_contributions: Vec<HostFabricMemberContribution>,
+    #[serde(default)]
+    pub lifecycle_plans: Vec<LifecyclePlanPosture>,
+    #[serde(default)]
+    pub host_fabric_fulfillment_plans: Vec<HostFabricFulfillmentPlan>,
     pub posture: Option<ServiceManagerPostureRecord>,
     pub updated_at: u64,
 }
@@ -102,6 +165,7 @@ pub struct ServiceOperationRequest {
     pub requested_at: u64,
     pub dry_run: bool,
     pub blocked_reason: Option<String>,
+    pub fabric_control_role: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -115,7 +179,43 @@ pub struct ServiceOperationOutcome {
     pub blocked_reasons: Vec<String>,
     pub operation_posture: ServiceManagerOperationPostureRecord,
     pub proof_digest: ServiceManagerProofDigestRecord,
+    pub contract_target: ContractTarget,
+    pub target_registry_posture: ContractTargetRegistryPosture,
+    pub host_fabric_contribution: Option<HostFabricMemberContribution>,
+    pub lifecycle_plan: LifecyclePlanPosture,
+    pub host_fabric_fulfillment_plan: HostFabricFulfillmentPlan,
+    pub fabric_control_decision: FabricControlDecision,
     pub posture: ServiceManagerPostureRecord,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FabricControlDecision {
+    pub role_ref: Option<String>,
+    pub state: String,
+    pub source_plan_ref: Option<String>,
+    pub plan_state: Option<String>,
+    #[serde(default)]
+    pub blocked_reasons: Vec<String>,
+    #[serde(default)]
+    pub evidence_refs: Vec<String>,
+    pub observed_at: u64,
+}
+
+fn default_fabric_ref() -> String {
+    DEFAULT_FABRIC_REF.to_string()
+}
+
+fn default_host_adapter_ref() -> String {
+    DEFAULT_HOST_ADAPTER_REF.to_string()
+}
+
+fn default_lifecycle_contract_ref() -> String {
+    DEFAULT_LIFECYCLE_CONTRACT_REF.to_string()
+}
+
+fn default_association_handoff_ref() -> Option<String> {
+    Some(DEFAULT_ASSOCIATION_HANDOFF_REF.to_string())
 }
 
 pub fn default_managed_service_spec() -> ManagedServiceSpec {
@@ -127,6 +227,10 @@ pub fn default_managed_service_spec() -> ManagedServiceSpec {
         requester_ref: DEFAULT_REQUESTER_REF.to_string(),
         runner_ref: Some(DEFAULT_RUNNER_REF.to_string()),
         host_ref: Some("host:lab-service-manager".to_string()),
+        fabric_ref: DEFAULT_FABRIC_REF.to_string(),
+        host_adapter_ref: DEFAULT_HOST_ADAPTER_REF.to_string(),
+        lifecycle_contract_ref: DEFAULT_LIFECYCLE_CONTRACT_REF.to_string(),
+        association_handoff_ref: Some(DEFAULT_ASSOCIATION_HANDOFF_REF.to_string()),
         app_contract_ref: Some("app-contract:lab-managed@0.1.0".to_string()),
         version: Some("0.1.0".to_string()),
         build_ref: Some("build:lab-service:current".to_string()),
@@ -138,6 +242,7 @@ pub fn default_managed_service_spec() -> ManagedServiceSpec {
         access_group_refs: vec!["access-group:ops:service-manager".to_string()],
         authority_refs: vec!["authority:ops-admin".to_string()],
         grant_refs: vec!["grant:service-manager:lab-service".to_string()],
+        materialization_budget_refs: vec!["materialization-budget:service-manager".to_string()],
         resource_profile_ref: "resource-profile:service-manager".to_string(),
         resource_memory_mib: 512,
         resource_cpu_pct: 25,
@@ -150,6 +255,11 @@ pub fn default_manager_state(issued_at: u64) -> ServiceManagerState {
         services: vec![default_managed_service_spec()],
         operations: vec![],
         proof_digests: vec![],
+        contract_targets: vec![],
+        target_registry_postures: vec![],
+        host_fabric_contributions: vec![],
+        lifecycle_plans: vec![],
+        host_fabric_fulfillment_plans: vec![],
         posture: None,
         updated_at: issued_at,
     }
@@ -382,6 +492,1069 @@ pub fn build_operation_posture_for_spec(
 
     validate_service_manager_operation_posture(&record)?;
     Ok(record)
+}
+
+fn host_fabric_contribution_id(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+) -> String {
+    format!(
+        "fabric-contribution:{}:{}",
+        spec.service_id, operation.operation_id
+    )
+}
+
+fn lifecycle_plan_id(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+) -> String {
+    format!(
+        "lifecycle-plan:{}:{}",
+        spec.service_id, operation.operation_id
+    )
+}
+
+fn host_fabric_fulfillment_plan_id(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+) -> String {
+    format!("fabric-plan:{}:{}", spec.service_id, operation.operation_id)
+}
+
+fn host_fabric_contract_blockers(spec: &ManagedServiceSpec) -> Vec<String> {
+    let mut blocked_reasons = Vec::new();
+    if spec.fabric_ref.trim().is_empty() {
+        blocked_reasons.push("fabricRef:missing".to_string());
+    }
+    if spec.host_ref.as_deref().unwrap_or_default().is_empty() {
+        blocked_reasons.push("hostRef:missing".to_string());
+    }
+    if spec.runner_ref.as_deref().unwrap_or_default().is_empty() {
+        blocked_reasons.push("memberRef:missing".to_string());
+    }
+    if spec.host_adapter_ref.trim().is_empty() {
+        blocked_reasons.push("hostAdapterRef:missing".to_string());
+    }
+    if spec.lifecycle_contract_ref.trim().is_empty() {
+        blocked_reasons.push("lifecycleContractRef:missing".to_string());
+    }
+    blocked_reasons
+}
+
+fn contract_target_ref(spec: &ManagedServiceSpec) -> String {
+    format!("contract-target:{}", spec.service_id)
+}
+
+fn contract_target_registry_ref(spec: &ManagedServiceSpec) -> String {
+    format!("contract-target-registry:{}", spec.service_id)
+}
+
+fn contract_target_contract_ref(spec: &ManagedServiceSpec) -> String {
+    spec.app_contract_ref
+        .clone()
+        .unwrap_or_else(|| spec.host_adapter_ref.clone())
+}
+
+fn contract_target_capability_slot_refs(spec: &ManagedServiceSpec, operation: &str) -> Vec<String> {
+    let mut refs = vec![
+        "slot:host-service-adapter".to_string(),
+        "slot:lifecycle-contract".to_string(),
+        "slot:source".to_string(),
+        "slot:build".to_string(),
+        "slot:release".to_string(),
+        "slot:runner".to_string(),
+    ];
+    if rollback_required_for(operation) && spec.rollback_required {
+        refs.push("slot:rollback".to_string());
+    }
+    refs
+}
+
+fn contract_target_missing_slot_refs(spec: &ManagedServiceSpec, operation: &str) -> Vec<String> {
+    let mut refs = Vec::new();
+    if spec.host_ref.as_deref().unwrap_or_default().is_empty() {
+        refs.push("slot:host".to_string());
+    }
+    if spec.host_adapter_ref.trim().is_empty() {
+        refs.push("slot:host-service-adapter".to_string());
+    }
+    if spec.lifecycle_contract_ref.trim().is_empty() {
+        refs.push("slot:lifecycle-contract".to_string());
+    }
+    if spec.app_contract_ref.is_none() {
+        refs.push("slot:source".to_string());
+    }
+    if spec.build_ref.is_none() {
+        refs.push("slot:build".to_string());
+    }
+    if spec.release_ref.is_none() {
+        refs.push("slot:release".to_string());
+    }
+    if spec.runner_ref.as_deref().unwrap_or_default().is_empty() {
+        refs.push("slot:runner".to_string());
+    }
+    if rollback_required_for(operation) && spec.rollback_required && spec.rollback_ref.is_none() {
+        refs.push("slot:rollback".to_string());
+    }
+    normalize_blockers(refs)
+}
+
+pub fn build_contract_target_for_spec(
+    spec: &ManagedServiceSpec,
+    operation: &str,
+    issued_at: u64,
+    blocked_reasons: Vec<String>,
+) -> Result<ContractTarget> {
+    let missing_slot_refs = contract_target_missing_slot_refs(spec, operation);
+    let mut blocked_reasons = blocked_reasons;
+    for slot_ref in &missing_slot_refs {
+        blocked_reasons.push(format!("targetSlot:missing:{slot_ref}"));
+    }
+    let blocked_reasons = normalize_blockers(blocked_reasons);
+    let blocked = !blocked_reasons.is_empty() || !missing_slot_refs.is_empty();
+    let target = ContractTarget {
+        kind: Some(RECORD_CONTRACT_TARGET.to_string()),
+        target_ref: contract_target_ref(spec),
+        contract_ref: contract_target_contract_ref(spec),
+        profile_ref: spec
+            .host_ref
+            .clone()
+            .map(|host| format!("host-profile:{host}"))
+            .unwrap_or_else(|| "host-profile:unresolved".to_string()),
+        platform_ref: "platform:host-service".to_string(),
+        state: if blocked {
+            FABRIC_CONTRACT_TARGET_BLOCKED
+        } else {
+            FABRIC_CONTRACT_TARGET_READY
+        }
+        .to_string(),
+        compatibility_state: if blocked {
+            FABRIC_CONTRACT_TARGET_INCOMPATIBLE
+        } else {
+            FABRIC_CONTRACT_TARGET_COMPATIBLE
+        }
+        .to_string(),
+        host_ref: spec.host_ref.clone(),
+        substrate_ref: Some("substrate:host-service".to_string()),
+        modifier_refs: vec!["modifier:service-manager".to_string()],
+        branch_refs: Vec::new(),
+        subbranch_refs: Vec::new(),
+        capability_slot_refs: contract_target_capability_slot_refs(spec, operation),
+        adapter_pack_ref: Some("adapter-pack:host-service".to_string()),
+        adapter_refs: if spec.host_adapter_ref.trim().is_empty() {
+            Vec::new()
+        } else {
+            vec![spec.host_adapter_ref.clone()]
+        },
+        negative_slot_refs: Vec::new(),
+        missing_slot_refs,
+        degraded_slot_refs: Vec::new(),
+        proof_profile_refs: vec!["proof-profile:service-manager:lifecycle".to_string()],
+        proof_refs: Vec::new(),
+        compatibility_refs: spec.compatibility_refs.clone(),
+        evidence_refs: vec![format!("evidence:contract-target:{}", spec.service_id)],
+        blocked_reasons,
+        target_audience: "operator".to_string(),
+        safe_facts: json!({
+            "serviceId": spec.service_id,
+            "operation": operation
+        }),
+        issued_at,
+        expires_at: Some(issued_at + 3600),
+    };
+    validate_contract_target(&target)?;
+    Ok(target)
+}
+
+fn normalize_blockers(mut blocked_reasons: Vec<String>) -> Vec<String> {
+    blocked_reasons.sort();
+    blocked_reasons.dedup();
+    blocked_reasons
+}
+
+pub fn build_host_fabric_member_contribution_for_spec(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+    observed_at: u64,
+    blocked_reasons: Vec<String>,
+) -> Result<Option<HostFabricMemberContribution>> {
+    let member_ref = match spec.runner_ref.as_deref().filter(|value| !value.is_empty()) {
+        Some(member_ref) => member_ref.to_string(),
+        None => return Ok(None),
+    };
+    let mut blocked_reasons = blocked_reasons;
+    blocked_reasons.extend(host_fabric_contract_blockers(spec));
+    let blocked_reasons = normalize_blockers(blocked_reasons);
+    let state = if blocked_reasons.is_empty() {
+        FABRIC_MEMBER_CONTRIBUTION_RUNNING
+    } else {
+        FABRIC_MEMBER_CONTRIBUTION_BLOCKED
+    };
+    let contribution = HostFabricMemberContribution {
+        kind: Some(RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION.to_string()),
+        contribution_id: host_fabric_contribution_id(spec, operation),
+        fabric_ref: spec.fabric_ref.clone(),
+        host_ref: spec.host_ref.clone().unwrap_or_default(),
+        member_ref,
+        role: FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER.to_string(),
+        state: state.to_string(),
+        contract_ref: spec.host_adapter_ref.clone(),
+        subject_ref: spec.subject_ref.clone(),
+        capability_refs: vec![constitute_protocol::CAPABILITY_SERVICE_MANAGE.to_string()],
+        grant_refs: spec.grant_refs.clone(),
+        input_refs: vec![operation.operation_id.clone()],
+        output_refs: vec![format!("output:service-manager:{}", operation.operation_id)],
+        evidence_refs: operation.evidence_refs.clone(),
+        lifecycle_plan_refs: vec![lifecycle_plan_id(spec, operation)],
+        release_refs: spec.release_ref.clone().into_iter().collect(),
+        resource_posture: operation.resource_posture.clone(),
+        blocked_reasons,
+        safe_facts: json!({
+            "role": FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
+            "operation": operation.operation,
+            "serviceId": spec.service_id
+        }),
+        observed_at,
+        expires_at: Some(observed_at + 3600),
+    };
+    validate_host_fabric_member_contribution(&contribution)?;
+    Ok(Some(contribution))
+}
+
+fn lifecycle_phase(
+    phase: &str,
+    state: &str,
+    evidence_ref: String,
+    output_refs: Vec<String>,
+    blocked_reasons: Vec<String>,
+) -> LifecyclePhasePosture {
+    LifecyclePhasePosture {
+        phase: phase.to_string(),
+        state: state.to_string(),
+        evidence_refs: vec![evidence_ref],
+        output_refs,
+        blocked_reasons,
+        safe_facts: json!({ "phase": phase, "state": state }),
+    }
+}
+
+pub fn build_lifecycle_plan_for_spec(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+    member_contribution_refs: Vec<String>,
+    observed_at: u64,
+    blocked_reasons: Vec<String>,
+) -> Result<LifecyclePlanPosture> {
+    let mut blocked_reasons = blocked_reasons;
+    blocked_reasons.extend(host_fabric_contract_blockers(spec));
+    if member_contribution_refs.is_empty() {
+        blocked_reasons.push("hostFabric:missingMemberContribution".to_string());
+    }
+    let blocked_reasons = normalize_blockers(blocked_reasons);
+    let plan_state = if blocked_reasons.is_empty() {
+        FABRIC_LIFECYCLE_PLAN_READY
+    } else {
+        FABRIC_LIFECYCLE_PLAN_BLOCKED
+    };
+    let build_blockers = if spec.build_ref.is_some() {
+        vec![]
+    } else {
+        vec!["buildRef:missing".to_string()]
+    };
+    let release_blockers = if spec.release_ref.is_some() {
+        vec![]
+    } else {
+        vec!["releaseRef:missing".to_string()]
+    };
+    let rollback_blockers = if rollback_required_for(&operation.operation)
+        && spec.rollback_required
+        && spec.rollback_ref.is_none()
+    {
+        vec!["rollbackRequired".to_string()]
+    } else {
+        vec![]
+    };
+    let run_state = if matches!(
+        operation.operation.as_str(),
+        SERVICE_MANAGER_OPERATION_START
+            | SERVICE_MANAGER_OPERATION_RESTART
+            | SERVICE_MANAGER_OPERATION_HEALTH_CHECK
+            | SERVICE_MANAGER_OPERATION_PROMOTE
+    ) && operation.state == SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED
+    {
+        FABRIC_LIFECYCLE_PHASE_RUNNING
+    } else if operation.operation == SERVICE_MANAGER_OPERATION_STOP {
+        FABRIC_LIFECYCLE_PHASE_NOT_REQUIRED
+    } else {
+        FABRIC_LIFECYCLE_PHASE_READY
+    };
+    let phases = vec![
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_SOURCE,
+            FABRIC_LIFECYCLE_PHASE_READY,
+            format!("evidence:source:{}", spec.service_id),
+            spec.app_contract_ref.clone().into_iter().collect(),
+            vec![],
+        ),
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_BUILD,
+            if build_blockers.is_empty() {
+                FABRIC_LIFECYCLE_PHASE_READY
+            } else {
+                FABRIC_LIFECYCLE_PHASE_BLOCKED
+            },
+            format!("evidence:build:{}", spec.service_id),
+            spec.build_ref.clone().into_iter().collect(),
+            build_blockers,
+        ),
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_RELEASE,
+            if release_blockers.is_empty() {
+                FABRIC_LIFECYCLE_PHASE_READY
+            } else {
+                FABRIC_LIFECYCLE_PHASE_BLOCKED
+            },
+            format!("evidence:release:{}", spec.service_id),
+            spec.release_ref.clone().into_iter().collect(),
+            release_blockers,
+        ),
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_LOAD,
+            FABRIC_LIFECYCLE_PHASE_SUCCEEDED,
+            format!("evidence:load:{}", spec.service_id),
+            vec![operation.operation_id.clone()],
+            vec![],
+        ),
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_RUN,
+            run_state,
+            format!("evidence:run:{}", spec.service_id),
+            vec![operation.operation_id.clone()],
+            vec![],
+        ),
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_OBSERVE,
+            FABRIC_LIFECYCLE_PHASE_READY,
+            format!("evidence:observe:{}", spec.service_id),
+            operation.evidence_refs.clone(),
+            vec![],
+        ),
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_ROLLBACK,
+            if rollback_blockers.is_empty() {
+                FABRIC_LIFECYCLE_PHASE_READY
+            } else {
+                FABRIC_LIFECYCLE_PHASE_BLOCKED
+            },
+            format!("evidence:rollback:{}", spec.service_id),
+            spec.rollback_ref.clone().into_iter().collect(),
+            rollback_blockers,
+        ),
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_CLEANUP,
+            FABRIC_LIFECYCLE_PHASE_NOT_REQUIRED,
+            format!("evidence:cleanup:{}", spec.service_id),
+            vec![],
+            vec![],
+        ),
+    ];
+    let lifecycle = LifecyclePlanPosture {
+        kind: Some(RECORD_LIFECYCLE_PLAN_POSTURE.to_string()),
+        lifecycle_plan_id: lifecycle_plan_id(spec, operation),
+        subject_ref: spec.subject_ref.clone(),
+        contract_ref: spec.lifecycle_contract_ref.clone(),
+        state: plan_state.to_string(),
+        lifecycle_contract_refs: vec![spec.lifecycle_contract_ref.clone()],
+        phase_postures: phases,
+        member_contribution_refs,
+        evidence_refs: vec![format!("evidence:lifecycle-plan:{}", spec.service_id)],
+        release_refs: spec.release_ref.clone().into_iter().collect(),
+        blocked_reasons,
+        safe_facts: json!({
+            "serviceId": spec.service_id,
+            "operation": operation.operation,
+            "state": plan_state
+        }),
+        observed_at,
+        expires_at: Some(observed_at + 3600),
+    };
+    validate_lifecycle_plan_posture(&lifecycle)?;
+    Ok(lifecycle)
+}
+
+fn target_slot_posture(
+    slot_ref: &str,
+    state: &str,
+    platform_fit_state: &str,
+    candidate_fulfillment_refs: Vec<String>,
+    selected_fulfillment_ref: Option<String>,
+    evidence_refs: Vec<String>,
+    blocked_reasons: Vec<String>,
+) -> ContractTargetSlotPosture {
+    ContractTargetSlotPosture {
+        slot_ref: slot_ref.to_string(),
+        state: state.to_string(),
+        platform_fit_state: platform_fit_state.to_string(),
+        candidate_fulfillment_refs,
+        selected_fulfillment_ref,
+        source_refs: Vec::new(),
+        build_refs: Vec::new(),
+        platform_refs: vec!["platform:host-service".to_string()],
+        adapter_refs: Vec::new(),
+        proof_requirement_refs: Vec::new(),
+        proof_refs: Vec::new(),
+        evidence_refs,
+        blocked_reasons,
+        safe_facts: json!({ "slot": slot_ref, "state": state }),
+    }
+}
+
+fn refs(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).to_string()).collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lab_target_slot(
+    slot_ref: &str,
+    state: &str,
+    platform_fit_state: &str,
+    candidate_fulfillment_refs: Vec<String>,
+    selected_fulfillment_ref: Option<&str>,
+    source_refs: Vec<String>,
+    build_refs: Vec<String>,
+    platform_refs: Vec<String>,
+    adapter_refs: Vec<String>,
+    proof_requirement_refs: Vec<String>,
+    proof_refs: Vec<String>,
+    evidence_refs: Vec<String>,
+    blocked_reasons: Vec<String>,
+    safe_facts: Value,
+) -> ContractTargetSlotPosture {
+    ContractTargetSlotPosture {
+        slot_ref: slot_ref.to_string(),
+        state: state.to_string(),
+        platform_fit_state: platform_fit_state.to_string(),
+        candidate_fulfillment_refs,
+        selected_fulfillment_ref: selected_fulfillment_ref.map(str::to_string),
+        source_refs,
+        build_refs,
+        platform_refs,
+        adapter_refs,
+        proof_requirement_refs,
+        proof_refs,
+        evidence_refs,
+        blocked_reasons,
+        safe_facts,
+    }
+}
+
+pub fn lab_linux_target_fixture(issued_at: u64) -> Result<LabLinuxTargetFixture> {
+    let release_contract = build_release_contract_with_refs(
+        issued_at,
+        vec![],
+        vec!["lab-proof:service-manager:lab-linux-protected".to_string()],
+    );
+    let protected_lab_proof = build_lab_proof_with_train(
+        "lab-proof:service-manager:lab-linux-protected",
+        "train:lab-linux:protected-target",
+        &release_contract,
+        SERVICE_MANAGER_PROOF_STATE_BLOCKED,
+        issued_at + 300,
+        vec!["blocked:lab-proof-protected-manual".to_string()],
+    )?;
+    let missing_slot_refs = refs(&[
+        "slot:runtime-client",
+        "slot:nvr-surface",
+        "slot:lab-proof-automation",
+    ]);
+    let degraded_slot_refs = refs(&["slot:rollback"]);
+    let negative_slot_refs = refs(&["slot:browser-webrtc"]);
+    let target = ContractTarget {
+        kind: Some(RECORD_CONTRACT_TARGET.to_string()),
+        target_ref: "contract-target:home-linux-lab:msa-transition".to_string(),
+        contract_ref: "app:contract:constitute-nvr@0.1.0".to_string(),
+        profile_ref: "host-profile:home".to_string(),
+        platform_ref: "platform:linux.lab".to_string(),
+        state: FABRIC_CONTRACT_TARGET_SELECTED.to_string(),
+        compatibility_state: FABRIC_CONTRACT_TARGET_COMPATIBILITY_DEGRADED.to_string(),
+        host_ref: Some("host:lab-gateway".to_string()),
+        substrate_ref: Some("substrate:home-dev".to_string()),
+        modifier_refs: refs(&["modifier:home", "modifier:dev"]),
+        branch_refs: refs(&["branch:0x/msa-transition"]),
+        subbranch_refs: refs(&["subbranch:target-contract"]),
+        capability_slot_refs: refs(&[
+            "slot:gateway",
+            "slot:storage",
+            "slot:service-manager",
+            "slot:nvr-service",
+            "slot:runtime-client",
+            "slot:nvr-surface",
+            "slot:browser-webrtc",
+            "slot:rollback",
+            "slot:lab-proof-automation",
+        ]),
+        adapter_pack_ref: Some("adapter-pack:linux-lab-dev".to_string()),
+        adapter_refs: refs(&[
+            "adapter:host-service:linux",
+            "adapter:gateway:linux",
+            "adapter:storage:local",
+        ]),
+        negative_slot_refs,
+        missing_slot_refs,
+        degraded_slot_refs,
+        proof_profile_refs: refs(&[
+            "proof-profile:service-manager-lab",
+            "proof-profile:gateway-native-smoke",
+            "proof-profile:nvr-smoke-5s",
+        ]),
+        proof_refs: refs(&["proof:service-manager-cargo-test:20260522"]),
+        compatibility_refs: refs(&["compat:runtime-2.56", "compat:branch-family:msa-transition"]),
+        evidence_refs: refs(&[
+            "evidence:lab-target:service-manager-fixture",
+            "evidence:service-manager:target-reducer",
+            "lab-proof:service-manager:lab-linux-protected",
+        ]),
+        blocked_reasons: vec![],
+        target_audience: "developer".to_string(),
+        safe_facts: json!({
+            "profile": "home-dev",
+            "platform": "linux.lab",
+            "proofAutomation": "manualProtected"
+        }),
+        issued_at,
+        expires_at: Some(issued_at + 86_400),
+    };
+    validate_contract_target(&target)?;
+
+    let slot_postures = vec![
+        lab_target_slot(
+            "slot:gateway",
+            FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_COMPATIBLE,
+            refs(&["fulfillment:gateway:lab-dev"]),
+            Some("fulfillment:gateway:lab-dev"),
+            vec![],
+            vec![],
+            refs(&["platform:linux.lab"]),
+            refs(&["adapter:gateway:linux"]),
+            vec![],
+            vec![],
+            refs(&["evidence:gateway:lab:configured"]),
+            vec![],
+            json!({ "role": "gateway" }),
+        ),
+        lab_target_slot(
+            "slot:storage",
+            FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_COMPATIBLE,
+            refs(&["fulfillment:storage:lab-local"]),
+            Some("fulfillment:storage:lab-local"),
+            vec![],
+            vec![],
+            refs(&["platform:linux.lab"]),
+            refs(&["adapter:storage:local"]),
+            refs(&["proof-requirement:storage-availability"]),
+            vec![],
+            refs(&["evidence:storage:lab:configured"]),
+            vec![],
+            json!({ "role": "storage" }),
+        ),
+        lab_target_slot(
+            "slot:service-manager",
+            FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_COMPATIBLE,
+            refs(&["fulfillment:service-manager:lab"]),
+            Some("fulfillment:service-manager:lab"),
+            vec![],
+            refs(&["build:lab:service-manager"]),
+            refs(&["platform:linux.lab"]),
+            refs(&["adapter:host-service:linux"]),
+            vec![],
+            refs(&["proof:service-manager-cargo-test:20260522"]),
+            refs(&["evidence:service-manager:target-reducer"]),
+            vec![],
+            json!({ "role": "service-manager" }),
+        ),
+        lab_target_slot(
+            "slot:nvr-service",
+            FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_COMPATIBLE,
+            refs(&["fulfillment:nvr-service:lab-network"]),
+            Some("fulfillment:nvr-service:lab-network"),
+            vec![],
+            refs(&["build:lab:nvr-service"]),
+            refs(&["platform:linux.lab"]),
+            vec![],
+            refs(&["proof-requirement:nvr-service-live"]),
+            vec![],
+            refs(&["evidence:nvr-service:lab:configured"]),
+            vec![],
+            json!({ "role": "nvr-service" }),
+        ),
+        lab_target_slot(
+            "slot:runtime-client",
+            FABRIC_CONTRACT_TARGET_SLOT_MISSING,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_UNKNOWN,
+            vec![],
+            None,
+            refs(&["content-index:runtime-surface-client"]),
+            vec![],
+            vec![],
+            vec![],
+            refs(&["proof-requirement:client-target-selected"]),
+            vec![],
+            refs(&["evidence:runtime-client:client-target-unselected"]),
+            refs(&["blocked:lab-client-target-unselected"]),
+            json!({ "reason": "lab host target does not include a proved local client" }),
+        ),
+        lab_target_slot(
+            "slot:nvr-surface",
+            FABRIC_CONTRACT_TARGET_SLOT_MISSING,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_UNKNOWN,
+            vec![],
+            None,
+            refs(&["content-index:nvr-surface"]),
+            vec![],
+            vec![],
+            vec![],
+            refs(&["proof-requirement:surface-load"]),
+            vec![],
+            refs(&["evidence:nvr-surface:client-target-unselected"]),
+            refs(&["blocked:lab-client-target-unselected"]),
+            json!({ "reason": "surface proof belongs to a client target" }),
+        ),
+        lab_target_slot(
+            "slot:browser-webrtc",
+            FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_UNKNOWN,
+            vec![],
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            refs(&["evidence:target:browser-webrtc:not-host-slot"]),
+            vec![],
+            json!({ "reason": "lab host target" }),
+        ),
+        lab_target_slot(
+            "slot:rollback",
+            FABRIC_CONTRACT_TARGET_SLOT_DEGRADED,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_DEGRADED,
+            refs(&["fulfillment:rollback:manual"]),
+            Some("fulfillment:rollback:manual"),
+            vec![],
+            vec![],
+            refs(&["platform:linux.lab"]),
+            vec![],
+            refs(&["proof-requirement:rollback-automation"]),
+            vec![],
+            refs(&["evidence:rollback:manual"]),
+            vec![],
+            json!({ "reason": "manual rollback only" }),
+        ),
+        lab_target_slot(
+            "slot:lab-proof-automation",
+            FABRIC_CONTRACT_TARGET_SLOT_MISSING,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_UNKNOWN,
+            vec![],
+            None,
+            vec![],
+            vec![],
+            refs(&["platform:linux.lab"]),
+            vec![],
+            refs(&[
+                "proof-requirement:bootstrap",
+                "proof-requirement:secrets",
+                "proof-requirement:rollback",
+                "proof-requirement:lab-live",
+            ]),
+            vec![],
+            refs(&["lab-proof:service-manager:lab-linux-protected"]),
+            refs(&["blocked:lab-proof-protected-manual"]),
+            json!({ "reason": "lab proof remains protected until bootstrap, secrets, and rollback contracts automate it" }),
+        ),
+    ];
+    let registry = ContractTargetRegistryPosture {
+        kind: Some(RECORD_CONTRACT_TARGET_REGISTRY_POSTURE.to_string()),
+        registry_ref: "contract-target-registry:home-linux-lab:msa-transition".to_string(),
+        target_ref: target.target_ref.clone(),
+        contract_ref: target.contract_ref.clone(),
+        state: FABRIC_CONTRACT_TARGET_REGISTRY_DEGRADED.to_string(),
+        candidate_fulfillment_refs: slot_postures
+            .iter()
+            .flat_map(|slot| slot.candidate_fulfillment_refs.clone())
+            .collect(),
+        source_refs: refs(&[
+            "content-index:nvr-surface",
+            "content-index:runtime-surface-client",
+        ]),
+        build_refs: refs(&[
+            "build:lab:gateway",
+            "build:lab:service-manager",
+            "build:lab:nvr-service",
+        ]),
+        adapter_refs: target.adapter_refs.clone(),
+        proof_requirement_refs: refs(&[
+            "proof-requirement:bootstrap",
+            "proof-requirement:secrets",
+            "proof-requirement:rollback",
+            "proof-requirement:lab-live",
+            "proof-requirement:client-target-selected",
+        ]),
+        proof_refs: target.proof_refs.clone(),
+        evidence_refs: target.evidence_refs.clone(),
+        blocked_reasons: vec![],
+        safe_facts: target.safe_facts.clone(),
+        slot_postures,
+        observed_at: issued_at,
+        expires_at: Some(issued_at + 86_400),
+    };
+    validate_contract_target_registry_posture(&registry)?;
+    Ok(LabLinuxTargetFixture {
+        target,
+        registry,
+        release_contract,
+        protected_lab_proof,
+    })
+}
+
+fn target_slot_from_optional_ref(
+    slot_ref: &str,
+    candidate_ref: Option<String>,
+    evidence_ref: String,
+) -> ContractTargetSlotPosture {
+    match candidate_ref.filter(|value| !value.trim().is_empty()) {
+        Some(candidate_ref) => target_slot_posture(
+            slot_ref,
+            FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_COMPATIBLE,
+            vec![candidate_ref.clone()],
+            Some(candidate_ref),
+            vec![evidence_ref],
+            vec![],
+        ),
+        None => target_slot_posture(
+            slot_ref,
+            FABRIC_CONTRACT_TARGET_SLOT_MISSING,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_UNKNOWN,
+            Vec::new(),
+            None,
+            vec![evidence_ref],
+            vec![format!("targetSlot:missing:{slot_ref}")],
+        ),
+    }
+}
+
+pub fn build_contract_target_registry_posture_for_spec(
+    spec: &ManagedServiceSpec,
+    target: &ContractTarget,
+    operation: &ServiceManagerOperationPostureRecord,
+    host_fabric_contribution: Option<&HostFabricMemberContribution>,
+    lifecycle_plan: Option<&LifecyclePlanPosture>,
+    observed_at: u64,
+    blocked_reasons: Vec<String>,
+) -> Result<ContractTargetRegistryPosture> {
+    validate_contract_target(target)?;
+    let mut slot_postures = Vec::new();
+    slot_postures.push(target_slot_from_optional_ref(
+        "slot:host-service-adapter",
+        host_fabric_contribution
+            .map(|contribution| contribution.contribution_id.clone())
+            .or_else(|| {
+                (!spec.host_adapter_ref.trim().is_empty()).then(|| spec.host_adapter_ref.clone())
+            }),
+        format!("evidence:host-service-adapter:{}", spec.service_id),
+    ));
+    slot_postures.push(target_slot_from_optional_ref(
+        "slot:lifecycle-contract",
+        lifecycle_plan
+            .map(|plan| plan.lifecycle_plan_id.clone())
+            .or_else(|| {
+                (!spec.lifecycle_contract_ref.trim().is_empty())
+                    .then(|| spec.lifecycle_contract_ref.clone())
+            }),
+        format!("evidence:lifecycle-contract:{}", spec.service_id),
+    ));
+    slot_postures.push(target_slot_from_optional_ref(
+        "slot:source",
+        spec.app_contract_ref.clone(),
+        format!("evidence:source:{}", spec.service_id),
+    ));
+    slot_postures.push(target_slot_from_optional_ref(
+        "slot:build",
+        spec.build_ref.clone(),
+        format!("evidence:build:{}", spec.service_id),
+    ));
+    slot_postures.push(target_slot_from_optional_ref(
+        "slot:release",
+        spec.release_ref.clone(),
+        format!("evidence:release:{}", spec.service_id),
+    ));
+    slot_postures.push(target_slot_from_optional_ref(
+        "slot:runner",
+        spec.runner_ref
+            .as_ref()
+            .filter(|runner_ref| !runner_ref.trim().is_empty())
+            .map(|runner_ref| format!("member:{runner_ref}")),
+        format!("evidence:runner:{}", spec.service_id),
+    ));
+    if rollback_required_for(&operation.operation) && spec.rollback_required {
+        slot_postures.push(target_slot_from_optional_ref(
+            "slot:rollback",
+            spec.rollback_ref.clone(),
+            format!("evidence:rollback:{}", spec.service_id),
+        ));
+    } else {
+        slot_postures.push(target_slot_posture(
+            "slot:rollback",
+            FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_UNKNOWN,
+            Vec::new(),
+            None,
+            vec![format!("evidence:rollback:{}", spec.service_id)],
+            vec![],
+        ));
+    }
+
+    let mut top_blockers = normalize_blockers(blocked_reasons);
+    for slot in &slot_postures {
+        if matches!(
+            slot.state.as_str(),
+            FABRIC_CONTRACT_TARGET_SLOT_MISSING | FABRIC_CONTRACT_TARGET_SLOT_BLOCKED
+        ) {
+            top_blockers.push(format!("targetSlot:{}:{}", slot.state, slot.slot_ref));
+            top_blockers.extend(slot.blocked_reasons.clone());
+        }
+    }
+    let top_blockers = normalize_blockers(top_blockers);
+    let degraded = slot_postures.iter().any(|slot| {
+        slot.state == FABRIC_CONTRACT_TARGET_SLOT_BLOCKED
+            || slot.state == FABRIC_CONTRACT_TARGET_SLOT_MISSING
+    });
+    let candidate_fulfillment_refs = slot_postures
+        .iter()
+        .flat_map(|slot| slot.candidate_fulfillment_refs.clone())
+        .collect::<Vec<_>>();
+    let registry = ContractTargetRegistryPosture {
+        kind: Some(RECORD_CONTRACT_TARGET_REGISTRY_POSTURE.to_string()),
+        registry_ref: contract_target_registry_ref(spec),
+        target_ref: target.target_ref.clone(),
+        contract_ref: target.contract_ref.clone(),
+        state: if top_blockers.is_empty() {
+            if degraded {
+                FABRIC_CONTRACT_TARGET_REGISTRY_DEGRADED
+            } else {
+                FABRIC_CONTRACT_TARGET_REGISTRY_READY
+            }
+        } else {
+            FABRIC_CONTRACT_TARGET_REGISTRY_BLOCKED
+        }
+        .to_string(),
+        slot_postures,
+        candidate_fulfillment_refs,
+        source_refs: spec.app_contract_ref.clone().into_iter().collect(),
+        build_refs: spec.build_ref.clone().into_iter().collect(),
+        adapter_refs: if spec.host_adapter_ref.trim().is_empty() {
+            Vec::new()
+        } else {
+            vec![spec.host_adapter_ref.clone()]
+        },
+        proof_requirement_refs: vec!["proof-requirement:service-manager:lifecycle".to_string()],
+        proof_refs: vec![format!("proof:operation:{}", operation.operation_id)],
+        evidence_refs: vec![format!("evidence:target-registry:{}", spec.service_id)],
+        blocked_reasons: top_blockers,
+        safe_facts: json!({
+            "serviceId": spec.service_id,
+            "operation": operation.operation
+        }),
+        observed_at,
+        expires_at: Some(observed_at + 3600),
+    };
+    validate_contract_target_registry_posture(&registry)?;
+    Ok(registry)
+}
+
+pub fn build_host_fabric_fulfillment_plan_for_spec(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+    member_contribution_refs: Vec<String>,
+    lifecycle_plan_refs: Vec<String>,
+    observed_at: u64,
+    blocked_reasons: Vec<String>,
+) -> Result<HostFabricFulfillmentPlan> {
+    build_host_fabric_fulfillment_plan_for_spec_with_target(
+        spec,
+        operation,
+        member_contribution_refs,
+        lifecycle_plan_refs,
+        observed_at,
+        blocked_reasons,
+        None,
+    )
+}
+
+pub fn build_host_fabric_fulfillment_plan_for_spec_with_target(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+    member_contribution_refs: Vec<String>,
+    lifecycle_plan_refs: Vec<String>,
+    observed_at: u64,
+    blocked_reasons: Vec<String>,
+    target_registry_posture: Option<&ContractTargetRegistryPosture>,
+) -> Result<HostFabricFulfillmentPlan> {
+    let mut blocked_reasons = blocked_reasons;
+    blocked_reasons.extend(host_fabric_contract_blockers(spec));
+    if let Some(registry) = target_registry_posture {
+        validate_contract_target_registry_posture(registry)?;
+        blocked_reasons.extend(target_registry_blockers(registry));
+    }
+    let mut missing_role_refs = if member_contribution_refs.is_empty() {
+        vec![format!("role:{FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER}")]
+    } else {
+        vec![]
+    };
+    if let Some(registry) = target_registry_posture {
+        missing_role_refs.extend(target_registry_missing_slot_refs(registry));
+    }
+    if !missing_role_refs.is_empty() {
+        blocked_reasons.push("hostFabric:missingHostServiceAdapter".to_string());
+    }
+    let blocked_reasons = normalize_blockers(blocked_reasons);
+    let degraded = target_registry_posture.is_some_and(target_registry_degraded);
+    let state = if !blocked_reasons.is_empty() {
+        FABRIC_FULFILLMENT_PLAN_BLOCKED
+    } else if degraded {
+        FABRIC_FULFILLMENT_PLAN_DEGRADED
+    } else {
+        FABRIC_FULFILLMENT_PLAN_READY
+    };
+    let materialization_budget_refs = if spec.materialization_budget_refs.is_empty() {
+        vec!["materialization-budget:service-manager".to_string()]
+    } else {
+        spec.materialization_budget_refs.clone()
+    };
+    let plan = HostFabricFulfillmentPlan {
+        kind: Some(RECORD_HOST_FABRIC_FULFILLMENT_PLAN.to_string()),
+        plan_id: host_fabric_fulfillment_plan_id(spec, operation),
+        fabric_ref: spec.fabric_ref.clone(),
+        host_ref: spec.host_ref.clone().unwrap_or_default(),
+        contract_ref: spec.host_adapter_ref.clone(),
+        state: state.to_string(),
+        required_role_refs: vec![format!("role:{FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER}")],
+        member_contribution_refs,
+        missing_role_refs,
+        lifecycle_plan_refs,
+        materialization_budget_refs,
+        association_handoff_ref: spec.association_handoff_ref.clone(),
+        evidence_refs: vec![
+            format!("evidence:host-fabric-plan:{}", spec.service_id),
+            target_registry_posture
+                .map(|registry| registry.registry_ref.clone())
+                .unwrap_or_default(),
+        ]
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .collect(),
+        blocked_reasons,
+        safe_facts: json!({
+            "serviceId": spec.service_id,
+            "operation": operation.operation,
+            "state": state,
+            "targetRegistryRef": target_registry_posture.map(|registry| registry.registry_ref.clone())
+        }),
+        observed_at,
+        expires_at: Some(observed_at + 3600),
+    };
+    validate_host_fabric_fulfillment_plan(&plan)?;
+    Ok(plan)
+}
+
+pub fn reduce_host_fabric_fulfillment_plan_for_spec(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+    host_fabric_contributions: &[HostFabricMemberContribution],
+    lifecycle_plans: &[LifecyclePlanPosture],
+    observed_at: u64,
+    blocked_reasons: Vec<String>,
+    target_registry_posture: Option<&ContractTargetRegistryPosture>,
+) -> Result<HostFabricFulfillmentPlan> {
+    let mut blocked_reasons = blocked_reasons;
+    blocked_reasons.extend(host_fabric_contract_blockers(spec));
+    if let Some(registry) = target_registry_posture {
+        validate_contract_target_registry_posture(registry)?;
+        blocked_reasons.extend(target_registry_blockers(registry));
+    }
+    let materialization_budget_refs = if spec.materialization_budget_refs.is_empty() {
+        vec!["materialization-budget:service-manager".to_string()]
+    } else {
+        spec.materialization_budget_refs.clone()
+    };
+    let known_missing_role_refs = target_registry_posture
+        .map(target_registry_missing_slot_refs)
+        .unwrap_or_default();
+    let mut evidence_refs = vec![format!("evidence:host-fabric-plan:{}", spec.service_id)];
+    if let Some(registry) = target_registry_posture {
+        evidence_refs.push(registry.registry_ref.clone());
+    }
+    let reduction = reduce_host_fabric(HostFabricReductionInput {
+        plan_id: host_fabric_fulfillment_plan_id(spec, operation),
+        fabric_ref: spec.fabric_ref.clone(),
+        host_ref: spec.host_ref.clone().unwrap_or_default(),
+        contract_ref: spec.host_adapter_ref.clone(),
+        required_roles: vec![HostFabricRoleRequirement {
+            role_ref: format!("role:{FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER}"),
+            min_ready: 1,
+        }],
+        contributions: host_fabric_contributions.to_vec(),
+        lifecycle_plans: lifecycle_plans.to_vec(),
+        materialization_budget_refs,
+        known_missing_role_refs,
+        evidence_refs,
+        blocked_reasons,
+        association_handoff_ref: spec.association_handoff_ref.clone(),
+        observed_at,
+        expires_at: Some(observed_at + 3600),
+    })?;
+    Ok(reduction.fulfillment_plan)
+}
+
+fn target_registry_blockers(registry: &ContractTargetRegistryPosture) -> Vec<String> {
+    let mut blockers = registry.blocked_reasons.clone();
+    for slot in &registry.slot_postures {
+        if matches!(
+            slot.state.as_str(),
+            FABRIC_CONTRACT_TARGET_SLOT_MISSING | FABRIC_CONTRACT_TARGET_SLOT_BLOCKED
+        ) {
+            blockers.push(format!("targetSlot:{}:{}", slot.state, slot.slot_ref));
+            blockers.extend(slot.blocked_reasons.clone());
+        }
+    }
+    normalize_blockers(blockers)
+}
+
+fn target_registry_missing_slot_refs(registry: &ContractTargetRegistryPosture) -> Vec<String> {
+    registry
+        .slot_postures
+        .iter()
+        .filter(|slot| {
+            matches!(
+                slot.state.as_str(),
+                FABRIC_CONTRACT_TARGET_SLOT_MISSING | FABRIC_CONTRACT_TARGET_SLOT_BLOCKED
+            )
+        })
+        .map(|slot| slot.slot_ref.clone())
+        .collect()
+}
+
+fn target_registry_degraded(registry: &ContractTargetRegistryPosture) -> bool {
+    registry.state == FABRIC_CONTRACT_TARGET_REGISTRY_DEGRADED
+        || registry.slot_postures.iter().any(|slot| {
+            slot.state == FABRIC_CONTRACT_TARGET_SLOT_BLOCKED
+                || slot.state == FABRIC_CONTRACT_TARGET_SLOT_MISSING
+        })
 }
 
 pub fn build_proof_digest(
@@ -844,7 +2017,9 @@ pub fn apply_service_operation(
         .ok_or_else(|| anyhow!("managed service not found: {}", request.service_id))?
         .clone();
     validate_supported_operation(&request.operation)?;
+    let fabric_control_decision = reduce_fabric_control_decision(state, &spec, &request)?;
     let mut blocked_reasons = operation_blocked_reasons(&spec, &request);
+    blocked_reasons.extend(fabric_control_decision.blocked_reasons.clone());
     blocked_reasons.sort();
     blocked_reasons.dedup();
 
@@ -871,9 +2046,65 @@ pub fn apply_service_operation(
         request.requested_at + 80,
         blocked_reasons.clone(),
     )?;
+    let contract_target = build_contract_target_for_spec(
+        &spec,
+        &operation_posture.operation,
+        request.requested_at + 85,
+        blocked_reasons.clone(),
+    )?;
+    let host_fabric_contribution = build_host_fabric_member_contribution_for_spec(
+        &spec,
+        &operation_posture,
+        request.requested_at + 90,
+        blocked_reasons.clone(),
+    )?;
+    let member_contribution_refs = host_fabric_contribution
+        .as_ref()
+        .map(|contribution| vec![contribution.contribution_id.clone()])
+        .unwrap_or_default();
+    let lifecycle_plan = build_lifecycle_plan_for_spec(
+        &spec,
+        &operation_posture,
+        member_contribution_refs.clone(),
+        request.requested_at + 100,
+        blocked_reasons.clone(),
+    )?;
+    let target_registry_posture = build_contract_target_registry_posture_for_spec(
+        &spec,
+        &contract_target,
+        &operation_posture,
+        host_fabric_contribution.as_ref(),
+        Some(&lifecycle_plan),
+        request.requested_at + 105,
+        blocked_reasons.clone(),
+    )?;
+    let host_fabric_contributions = host_fabric_contribution
+        .clone()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let host_fabric_fulfillment_plan = reduce_host_fabric_fulfillment_plan_for_spec(
+        &spec,
+        &operation_posture,
+        &host_fabric_contributions,
+        std::slice::from_ref(&lifecycle_plan),
+        request.requested_at + 110,
+        blocked_reasons.clone(),
+        Some(&target_registry_posture),
+    )?;
     state.operations.push(operation_posture.clone());
     state.proof_digests.push(proof_digest.clone());
-    state.updated_at = request.requested_at + 80;
+    state.contract_targets.push(contract_target.clone());
+    state
+        .target_registry_postures
+        .push(target_registry_posture.clone());
+    if let Some(contribution) = &host_fabric_contribution {
+        state.host_fabric_contributions.push(contribution.clone());
+    }
+    state.lifecycle_plans.push(lifecycle_plan.clone());
+    state
+        .host_fabric_fulfillment_plans
+        .push(host_fabric_fulfillment_plan.clone());
+    state.updated_at = request.requested_at + 110;
     let posture = service_manager_status(state, &spec.service_id, state.updated_at)?;
     state.posture = Some(posture.clone());
 
@@ -885,6 +2116,12 @@ pub fn apply_service_operation(
         blocked_reasons,
         operation_posture,
         proof_digest,
+        contract_target,
+        target_registry_posture,
+        host_fabric_contribution,
+        lifecycle_plan,
+        host_fabric_fulfillment_plan,
+        fabric_control_decision,
         posture,
     })
 }
@@ -949,7 +2186,112 @@ fn operation_blocked_reasons(
     if spec.resource_memory_mib == 0 || spec.resource_cpu_pct == 0 {
         blocked_reasons.push("resourceBudget:missing".to_string());
     }
+    if spec.fabric_ref.trim().is_empty() {
+        blocked_reasons.push("fabricRef:missing".to_string());
+    }
+    if spec.host_adapter_ref.trim().is_empty() {
+        blocked_reasons.push("hostAdapterRef:missing".to_string());
+    }
+    if spec.lifecycle_contract_ref.trim().is_empty() {
+        blocked_reasons.push("lifecycleContractRef:missing".to_string());
+    }
     blocked_reasons
+}
+
+fn reduce_fabric_control_decision(
+    state: &ServiceManagerState,
+    spec: &ManagedServiceSpec,
+    request: &ServiceOperationRequest,
+) -> Result<FabricControlDecision> {
+    let Some(role) = request.fabric_control_role.as_deref() else {
+        return Ok(FabricControlDecision {
+            role_ref: None,
+            state: "notRequested".to_string(),
+            source_plan_ref: None,
+            plan_state: None,
+            blocked_reasons: vec![],
+            evidence_refs: vec!["evidence:fabric-control:not-requested".to_string()],
+            observed_at: request.requested_at,
+        });
+    };
+    let role_ref = fabric_role_ref(role);
+    let host_ref = spec.host_ref.as_deref().unwrap_or_default();
+    let latest_plan = state
+        .host_fabric_fulfillment_plans
+        .iter()
+        .rev()
+        .find(|plan| {
+            plan.fabric_ref == spec.fabric_ref
+                && plan.host_ref == host_ref
+                && plan.required_role_refs.contains(&role_ref)
+        });
+    let Some(plan) = latest_plan else {
+        let blocked = vec![format!("hostFabric:controlPlanMissing:{role_ref}")];
+        return Ok(FabricControlDecision {
+            role_ref: Some(role_ref),
+            state: "blocked".to_string(),
+            source_plan_ref: None,
+            plan_state: None,
+            blocked_reasons: blocked,
+            evidence_refs: vec!["evidence:fabric-control:missing-plan".to_string()],
+            observed_at: request.requested_at,
+        });
+    };
+    validate_host_fabric_fulfillment_plan(plan)?;
+    let mut blocked_reasons = Vec::new();
+    if plan
+        .expires_at
+        .is_some_and(|expires_at| expires_at <= request.requested_at)
+    {
+        blocked_reasons.push(format!("hostFabric:controlPlanExpired:{}", plan.plan_id));
+    }
+    if plan.missing_role_refs.contains(&role_ref) {
+        blocked_reasons.push(format!("hostFabric:controlRoleMissing:{role_ref}"));
+    }
+    match plan.state.as_str() {
+        FABRIC_FULFILLMENT_PLAN_READY => {}
+        FABRIC_FULFILLMENT_PLAN_DEGRADED => {
+            blocked_reasons.push(format!("hostFabric:controlDegraded:{role_ref}"));
+        }
+        FABRIC_FULFILLMENT_PLAN_BLOCKED => {
+            blocked_reasons.push(format!("hostFabric:controlBlocked:{role_ref}"));
+            blocked_reasons.extend(plan.blocked_reasons.clone());
+        }
+        other => {
+            blocked_reasons.push(format!("hostFabric:controlUnknown:{role_ref}:{other}"));
+        }
+    }
+    blocked_reasons.sort();
+    blocked_reasons.dedup();
+    let state = if blocked_reasons.is_empty() {
+        "ready"
+    } else if plan.state == FABRIC_FULFILLMENT_PLAN_DEGRADED {
+        "degraded"
+    } else {
+        "blocked"
+    };
+    let mut evidence_refs = plan.evidence_refs.clone();
+    evidence_refs.push(format!("evidence:fabric-control:{}", plan.plan_id));
+    evidence_refs.sort();
+    evidence_refs.dedup();
+    Ok(FabricControlDecision {
+        role_ref: Some(role_ref),
+        state: state.to_string(),
+        source_plan_ref: Some(plan.plan_id.clone()),
+        plan_state: Some(plan.state.clone()),
+        blocked_reasons,
+        evidence_refs,
+        observed_at: request.requested_at,
+    })
+}
+
+fn fabric_role_ref(role: &str) -> String {
+    let trimmed = role.trim();
+    if trimmed.starts_with("role:") {
+        trimmed.to_string()
+    } else {
+        format!("role:{trimmed}")
+    }
 }
 
 fn secret_required_for(operation: &str) -> bool {
@@ -1115,6 +2457,50 @@ pub fn service_manager_lifecycle_fixture(issued_at: u64) -> Result<ServiceManage
         vec![],
     )?];
     let secret_boundary = build_secret_boundary(issued_at);
+    let spec = default_managed_service_spec();
+    let lifecycle_operation = operations
+        .iter()
+        .find(|operation| operation.operation == SERVICE_MANAGER_OPERATION_START)
+        .expect("start operation")
+        .clone();
+    let contract_target = build_contract_target_for_spec(
+        &spec,
+        &lifecycle_operation.operation,
+        issued_at + 4990,
+        vec![],
+    )?;
+    let host_fabric_contribution = build_host_fabric_member_contribution_for_spec(
+        &spec,
+        &lifecycle_operation,
+        issued_at + 5000,
+        vec![],
+    )?
+    .ok_or_else(|| anyhow!("default lifecycle fixture requires host-fabric member contribution"))?;
+    let lifecycle_plan = build_lifecycle_plan_for_spec(
+        &spec,
+        &lifecycle_operation,
+        vec![host_fabric_contribution.contribution_id.clone()],
+        issued_at + 5010,
+        vec![],
+    )?;
+    let target_registry_posture = build_contract_target_registry_posture_for_spec(
+        &spec,
+        &contract_target,
+        &lifecycle_operation,
+        Some(&host_fabric_contribution),
+        Some(&lifecycle_plan),
+        issued_at + 5015,
+        vec![],
+    )?;
+    let host_fabric_fulfillment_plan = reduce_host_fabric_fulfillment_plan_for_spec(
+        &spec,
+        &lifecycle_operation,
+        std::slice::from_ref(&host_fabric_contribution),
+        std::slice::from_ref(&lifecycle_plan),
+        issued_at + 5020,
+        vec![],
+        Some(&target_registry_posture),
+    )?;
     let posture = reduce_protected_service_manager_posture(
         &secret_boundary,
         &release_contract,
@@ -1133,6 +2519,11 @@ pub fn service_manager_lifecycle_fixture(issued_at: u64) -> Result<ServiceManage
         proof_digests,
         lab_proofs,
         train_digests,
+        contract_targets: vec![contract_target],
+        target_registry_postures: vec![target_registry_posture],
+        host_fabric_contributions: vec![host_fabric_contribution],
+        lifecycle_plans: vec![lifecycle_plan],
+        host_fabric_fulfillment_plans: vec![host_fabric_fulfillment_plan],
         posture,
     };
     validate_fixture(&fixture)?;
@@ -1181,6 +2572,50 @@ pub fn blocked_operation_fixture(
         vec![reason.to_string()],
     )?];
     let secret_boundary = build_secret_boundary(requested_at);
+    let spec = default_managed_service_spec();
+    let contract_target = build_contract_target_for_spec(
+        &spec,
+        &operation.operation,
+        requested_at + 210,
+        vec![reason.to_string()],
+    )?;
+    let host_fabric_contribution = build_host_fabric_member_contribution_for_spec(
+        &spec,
+        &operation,
+        requested_at + 220,
+        vec![reason.to_string()],
+    )?
+    .into_iter()
+    .collect::<Vec<_>>();
+    let member_contribution_refs = host_fabric_contribution
+        .iter()
+        .map(|contribution| contribution.contribution_id.clone())
+        .collect::<Vec<_>>();
+    let lifecycle_plan = build_lifecycle_plan_for_spec(
+        &spec,
+        &operation,
+        member_contribution_refs.clone(),
+        requested_at + 230,
+        vec![reason.to_string()],
+    )?;
+    let target_registry_posture = build_contract_target_registry_posture_for_spec(
+        &spec,
+        &contract_target,
+        &operation,
+        host_fabric_contribution.first(),
+        Some(&lifecycle_plan),
+        requested_at + 235,
+        vec![reason.to_string()],
+    )?;
+    let host_fabric_fulfillment_plan = reduce_host_fabric_fulfillment_plan_for_spec(
+        &spec,
+        &operation,
+        &host_fabric_contribution,
+        std::slice::from_ref(&lifecycle_plan),
+        requested_at + 240,
+        vec![reason.to_string()],
+        Some(&target_registry_posture),
+    )?;
     let posture = reduce_protected_service_manager_posture(
         &secret_boundary,
         &release_contract,
@@ -1199,6 +2634,11 @@ pub fn blocked_operation_fixture(
         proof_digests: vec![proof_digest],
         lab_proofs,
         train_digests,
+        contract_targets: vec![contract_target],
+        target_registry_postures: vec![target_registry_posture],
+        host_fabric_contributions: host_fabric_contribution,
+        lifecycle_plans: vec![lifecycle_plan],
+        host_fabric_fulfillment_plans: vec![host_fabric_fulfillment_plan],
         posture,
     };
     validate_fixture(&fixture)?;
@@ -1219,6 +2659,21 @@ pub fn validate_fixture(fixture: &ServiceManagerLifecycleFixture) -> Result<()> 
     }
     for train_digest in &fixture.train_digests {
         validate_service_manager_train_digest(train_digest)?;
+    }
+    for target in &fixture.contract_targets {
+        validate_contract_target(target)?;
+    }
+    for registry in &fixture.target_registry_postures {
+        validate_contract_target_registry_posture(registry)?;
+    }
+    for contribution in &fixture.host_fabric_contributions {
+        validate_host_fabric_member_contribution(contribution)?;
+    }
+    for lifecycle_plan in &fixture.lifecycle_plans {
+        validate_lifecycle_plan_posture(lifecycle_plan)?;
+    }
+    for fulfillment_plan in &fixture.host_fabric_fulfillment_plans {
+        validate_host_fabric_fulfillment_plan(fulfillment_plan)?;
     }
     validate_service_manager_posture(&fixture.posture)
 }
