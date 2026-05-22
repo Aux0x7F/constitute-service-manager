@@ -4,7 +4,9 @@ use constitute_protocol::{
     SERVICE_MANAGER_OPERATION_START, SERVICE_MANAGER_OPERATION_STATE_BLOCKED,
     SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED, SERVICE_MANAGER_POSTURE_BLOCKED,
     SERVICE_MANAGER_POSTURE_READY, SERVICE_MANAGER_PROOF_STATE_BLOCKED,
-    SURFACE_SECRET_BOUNDARY_BLOCKED, validate_service_manager_operation_posture,
+    SURFACE_SECRET_BOUNDARY_BLOCKED, validate_host_fabric_fulfillment_plan,
+    validate_host_fabric_member_contribution, validate_lifecycle_plan_posture,
+    validate_service_manager_operation_posture,
 };
 use constitute_service_manager::{
     ServiceOperationRequest, apply_service_operation, blocked_operation_fixture,
@@ -24,6 +26,9 @@ fn lifecycle_fixture_covers_manager_operations() {
     assert_eq!(fixture.proof_digests.len(), 10);
     assert_eq!(fixture.lab_proofs.len(), 1);
     assert_eq!(fixture.train_digests.len(), 1);
+    assert_eq!(fixture.host_fabric_contributions.len(), 1);
+    assert_eq!(fixture.lifecycle_plans.len(), 1);
+    assert_eq!(fixture.host_fabric_fulfillment_plans.len(), 1);
     assert_eq!(fixture.posture.state, SERVICE_MANAGER_POSTURE_READY);
     assert_eq!(
         fixture.posture.secret_boundary["state"],
@@ -32,6 +37,19 @@ fn lifecycle_fixture_covers_manager_operations() {
     assert_eq!(fixture.posture.release_posture["state"], "releaseReady");
     assert_eq!(fixture.posture.rollback_posture["state"], "rollbackReady");
     validate_fixture(&fixture).expect("fixture validates");
+    validate_host_fabric_member_contribution(&fixture.host_fabric_contributions[0])
+        .expect("fabric contribution validates");
+    validate_lifecycle_plan_posture(&fixture.lifecycle_plans[0]).expect("lifecycle plan validates");
+    validate_host_fabric_fulfillment_plan(&fixture.host_fabric_fulfillment_plans[0])
+        .expect("fulfillment plan validates");
+    assert_eq!(
+        fixture.host_fabric_contributions[0].role,
+        constitute_protocol::FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER
+    );
+    assert_eq!(
+        fixture.host_fabric_fulfillment_plans[0].state,
+        constitute_protocol::FABRIC_FULFILLMENT_PLAN_READY
+    );
 
     let release = fixture
         .operations
@@ -97,6 +115,9 @@ fn protected_posture_blocks_missing_lifecycle_proof() {
             proof_digests: vec![],
             lab_proofs: vec![],
             train_digests: vec![],
+            host_fabric_contributions: vec![],
+            lifecycle_plans: vec![],
+            host_fabric_fulfillment_plans: vec![],
             posture,
         },
     )
@@ -255,7 +276,19 @@ fn dry_run_operation_persists_state_and_reduces_posture() {
     assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED);
     assert_eq!(state.operations.len(), 1);
     assert_eq!(state.proof_digests.len(), 1);
+    assert_eq!(state.host_fabric_contributions.len(), 1);
+    assert_eq!(state.lifecycle_plans.len(), 1);
+    assert_eq!(state.host_fabric_fulfillment_plans.len(), 1);
     assert_eq!(outcome.posture.state, SERVICE_MANAGER_POSTURE_READY);
+    assert!(outcome.host_fabric_contribution.is_some());
+    assert_eq!(
+        outcome.lifecycle_plan.state,
+        constitute_protocol::FABRIC_LIFECYCLE_PLAN_READY
+    );
+    assert_eq!(
+        outcome.host_fabric_fulfillment_plan.state,
+        constitute_protocol::FABRIC_FULFILLMENT_PLAN_READY
+    );
     assert_eq!(
         outcome.operation_posture.subject_ref,
         constitute_service_manager::DEFAULT_SUBJECT_REF

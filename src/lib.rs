@@ -1,6 +1,16 @@
 use anyhow::{Result, anyhow};
 use constitute_protocol::{
-    RECORD_RESOURCE_POSTURE, RECORD_SERVICE_MANAGER_LAB_PROOF,
+    FABRIC_FULFILLMENT_PLAN_BLOCKED, FABRIC_FULFILLMENT_PLAN_READY, FABRIC_LIFECYCLE_PHASE_BLOCKED,
+    FABRIC_LIFECYCLE_PHASE_BUILD, FABRIC_LIFECYCLE_PHASE_CLEANUP, FABRIC_LIFECYCLE_PHASE_LOAD,
+    FABRIC_LIFECYCLE_PHASE_NOT_REQUIRED, FABRIC_LIFECYCLE_PHASE_OBSERVE,
+    FABRIC_LIFECYCLE_PHASE_READY, FABRIC_LIFECYCLE_PHASE_RELEASE, FABRIC_LIFECYCLE_PHASE_ROLLBACK,
+    FABRIC_LIFECYCLE_PHASE_RUN, FABRIC_LIFECYCLE_PHASE_RUNNING, FABRIC_LIFECYCLE_PHASE_SOURCE,
+    FABRIC_LIFECYCLE_PHASE_SUCCEEDED, FABRIC_LIFECYCLE_PLAN_BLOCKED, FABRIC_LIFECYCLE_PLAN_READY,
+    FABRIC_MEMBER_CONTRIBUTION_BLOCKED, FABRIC_MEMBER_CONTRIBUTION_RUNNING,
+    FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER, HostFabricFulfillmentPlan,
+    HostFabricMemberContribution, LifecyclePhasePosture, LifecyclePlanPosture,
+    RECORD_HOST_FABRIC_FULFILLMENT_PLAN, RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION,
+    RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE, RECORD_SERVICE_MANAGER_LAB_PROOF,
     RECORD_SERVICE_MANAGER_OPERATION_POSTURE, RECORD_SERVICE_MANAGER_POSTURE,
     RECORD_SERVICE_MANAGER_PROOF_DIGEST, RECORD_SERVICE_MANAGER_RELEASE_CONTRACT,
     RECORD_SERVICE_MANAGER_SECRET_BOUNDARY, RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture,
@@ -17,10 +27,12 @@ use constitute_protocol::{
     ServiceManagerLabProofRecord, ServiceManagerOperationPostureRecord,
     ServiceManagerPostureRecord, ServiceManagerProofDigestRecord,
     ServiceManagerReleaseContractRecord, ServiceManagerSecretBoundaryRecord,
-    ServiceManagerTrainDigestRecord, validate_service_manager_lab_proof,
-    validate_service_manager_operation_posture, validate_service_manager_posture,
-    validate_service_manager_proof_digest, validate_service_manager_release_contract,
-    validate_service_manager_secret_boundary, validate_service_manager_train_digest,
+    ServiceManagerTrainDigestRecord, validate_host_fabric_fulfillment_plan,
+    validate_host_fabric_member_contribution, validate_lifecycle_plan_posture,
+    validate_service_manager_lab_proof, validate_service_manager_operation_posture,
+    validate_service_manager_posture, validate_service_manager_proof_digest,
+    validate_service_manager_release_contract, validate_service_manager_secret_boundary,
+    validate_service_manager_train_digest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -33,6 +45,10 @@ pub const DEFAULT_MANAGER_REF: &str = "member:service-manager:lab";
 pub const DEFAULT_REQUESTER_REF: &str = "identity:operator";
 pub const DEFAULT_RUNNER_REF: &str =
     "4a29ff60c5c3837e9e20555bfeb2a046be3eb140818144628691fcf7efb1d2f1";
+pub const DEFAULT_FABRIC_REF: &str = "fabric:lab-gateway";
+pub const DEFAULT_HOST_ADAPTER_REF: &str = "contract:host-service-adapter.service-manager@0.1.0";
+pub const DEFAULT_LIFECYCLE_CONTRACT_REF: &str = "contract:lifecycle.host-service-adapter@0.1.0";
+pub const DEFAULT_ASSOCIATION_HANDOFF_REF: &str = "handoff:substrate:lab-gateway:initial-owner";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +61,9 @@ pub struct ServiceManagerLifecycleFixture {
     pub proof_digests: Vec<ServiceManagerProofDigestRecord>,
     pub lab_proofs: Vec<ServiceManagerLabProofRecord>,
     pub train_digests: Vec<ServiceManagerTrainDigestRecord>,
+    pub host_fabric_contributions: Vec<HostFabricMemberContribution>,
+    pub lifecycle_plans: Vec<LifecyclePlanPosture>,
+    pub host_fabric_fulfillment_plans: Vec<HostFabricFulfillmentPlan>,
     pub posture: ServiceManagerPostureRecord,
 }
 
@@ -58,6 +77,14 @@ pub struct ManagedServiceSpec {
     pub requester_ref: String,
     pub runner_ref: Option<String>,
     pub host_ref: Option<String>,
+    #[serde(default = "default_fabric_ref")]
+    pub fabric_ref: String,
+    #[serde(default = "default_host_adapter_ref")]
+    pub host_adapter_ref: String,
+    #[serde(default = "default_lifecycle_contract_ref")]
+    pub lifecycle_contract_ref: String,
+    #[serde(default = "default_association_handoff_ref")]
+    pub association_handoff_ref: Option<String>,
     pub app_contract_ref: Option<String>,
     pub version: Option<String>,
     pub build_ref: Option<String>,
@@ -74,6 +101,8 @@ pub struct ManagedServiceSpec {
     pub authority_refs: Vec<String>,
     #[serde(default)]
     pub grant_refs: Vec<String>,
+    #[serde(default)]
+    pub materialization_budget_refs: Vec<String>,
     pub resource_profile_ref: String,
     pub resource_memory_mib: u64,
     pub resource_cpu_pct: u64,
@@ -90,6 +119,12 @@ pub struct ServiceManagerState {
     pub operations: Vec<ServiceManagerOperationPostureRecord>,
     #[serde(default)]
     pub proof_digests: Vec<ServiceManagerProofDigestRecord>,
+    #[serde(default)]
+    pub host_fabric_contributions: Vec<HostFabricMemberContribution>,
+    #[serde(default)]
+    pub lifecycle_plans: Vec<LifecyclePlanPosture>,
+    #[serde(default)]
+    pub host_fabric_fulfillment_plans: Vec<HostFabricFulfillmentPlan>,
     pub posture: Option<ServiceManagerPostureRecord>,
     pub updated_at: u64,
 }
@@ -115,7 +150,26 @@ pub struct ServiceOperationOutcome {
     pub blocked_reasons: Vec<String>,
     pub operation_posture: ServiceManagerOperationPostureRecord,
     pub proof_digest: ServiceManagerProofDigestRecord,
+    pub host_fabric_contribution: Option<HostFabricMemberContribution>,
+    pub lifecycle_plan: LifecyclePlanPosture,
+    pub host_fabric_fulfillment_plan: HostFabricFulfillmentPlan,
     pub posture: ServiceManagerPostureRecord,
+}
+
+fn default_fabric_ref() -> String {
+    DEFAULT_FABRIC_REF.to_string()
+}
+
+fn default_host_adapter_ref() -> String {
+    DEFAULT_HOST_ADAPTER_REF.to_string()
+}
+
+fn default_lifecycle_contract_ref() -> String {
+    DEFAULT_LIFECYCLE_CONTRACT_REF.to_string()
+}
+
+fn default_association_handoff_ref() -> Option<String> {
+    Some(DEFAULT_ASSOCIATION_HANDOFF_REF.to_string())
 }
 
 pub fn default_managed_service_spec() -> ManagedServiceSpec {
@@ -127,6 +181,10 @@ pub fn default_managed_service_spec() -> ManagedServiceSpec {
         requester_ref: DEFAULT_REQUESTER_REF.to_string(),
         runner_ref: Some(DEFAULT_RUNNER_REF.to_string()),
         host_ref: Some("host:lab-service-manager".to_string()),
+        fabric_ref: DEFAULT_FABRIC_REF.to_string(),
+        host_adapter_ref: DEFAULT_HOST_ADAPTER_REF.to_string(),
+        lifecycle_contract_ref: DEFAULT_LIFECYCLE_CONTRACT_REF.to_string(),
+        association_handoff_ref: Some(DEFAULT_ASSOCIATION_HANDOFF_REF.to_string()),
         app_contract_ref: Some("app-contract:lab-managed@0.1.0".to_string()),
         version: Some("0.1.0".to_string()),
         build_ref: Some("build:lab-service:current".to_string()),
@@ -138,6 +196,7 @@ pub fn default_managed_service_spec() -> ManagedServiceSpec {
         access_group_refs: vec!["access-group:ops:service-manager".to_string()],
         authority_refs: vec!["authority:ops-admin".to_string()],
         grant_refs: vec!["grant:service-manager:lab-service".to_string()],
+        materialization_budget_refs: vec!["materialization-budget:service-manager".to_string()],
         resource_profile_ref: "resource-profile:service-manager".to_string(),
         resource_memory_mib: 512,
         resource_cpu_pct: 25,
@@ -150,6 +209,9 @@ pub fn default_manager_state(issued_at: u64) -> ServiceManagerState {
         services: vec![default_managed_service_spec()],
         operations: vec![],
         proof_digests: vec![],
+        host_fabric_contributions: vec![],
+        lifecycle_plans: vec![],
+        host_fabric_fulfillment_plans: vec![],
         posture: None,
         updated_at: issued_at,
     }
@@ -382,6 +444,325 @@ pub fn build_operation_posture_for_spec(
 
     validate_service_manager_operation_posture(&record)?;
     Ok(record)
+}
+
+fn host_fabric_contribution_id(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+) -> String {
+    format!(
+        "fabric-contribution:{}:{}",
+        spec.service_id, operation.operation_id
+    )
+}
+
+fn lifecycle_plan_id(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+) -> String {
+    format!(
+        "lifecycle-plan:{}:{}",
+        spec.service_id, operation.operation_id
+    )
+}
+
+fn host_fabric_fulfillment_plan_id(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+) -> String {
+    format!("fabric-plan:{}:{}", spec.service_id, operation.operation_id)
+}
+
+fn host_fabric_contract_blockers(spec: &ManagedServiceSpec) -> Vec<String> {
+    let mut blocked_reasons = Vec::new();
+    if spec.fabric_ref.trim().is_empty() {
+        blocked_reasons.push("fabricRef:missing".to_string());
+    }
+    if spec.host_ref.as_deref().unwrap_or_default().is_empty() {
+        blocked_reasons.push("hostRef:missing".to_string());
+    }
+    if spec.runner_ref.as_deref().unwrap_or_default().is_empty() {
+        blocked_reasons.push("memberRef:missing".to_string());
+    }
+    if spec.host_adapter_ref.trim().is_empty() {
+        blocked_reasons.push("hostAdapterRef:missing".to_string());
+    }
+    if spec.lifecycle_contract_ref.trim().is_empty() {
+        blocked_reasons.push("lifecycleContractRef:missing".to_string());
+    }
+    blocked_reasons
+}
+
+fn normalize_blockers(mut blocked_reasons: Vec<String>) -> Vec<String> {
+    blocked_reasons.sort();
+    blocked_reasons.dedup();
+    blocked_reasons
+}
+
+pub fn build_host_fabric_member_contribution_for_spec(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+    observed_at: u64,
+    blocked_reasons: Vec<String>,
+) -> Result<Option<HostFabricMemberContribution>> {
+    let member_ref = match spec.runner_ref.as_deref().filter(|value| !value.is_empty()) {
+        Some(member_ref) => member_ref.to_string(),
+        None => return Ok(None),
+    };
+    let mut blocked_reasons = blocked_reasons;
+    blocked_reasons.extend(host_fabric_contract_blockers(spec));
+    let blocked_reasons = normalize_blockers(blocked_reasons);
+    let state = if blocked_reasons.is_empty() {
+        FABRIC_MEMBER_CONTRIBUTION_RUNNING
+    } else {
+        FABRIC_MEMBER_CONTRIBUTION_BLOCKED
+    };
+    let contribution = HostFabricMemberContribution {
+        kind: Some(RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION.to_string()),
+        contribution_id: host_fabric_contribution_id(spec, operation),
+        fabric_ref: spec.fabric_ref.clone(),
+        host_ref: spec.host_ref.clone().unwrap_or_default(),
+        member_ref,
+        role: FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER.to_string(),
+        state: state.to_string(),
+        contract_ref: spec.host_adapter_ref.clone(),
+        subject_ref: spec.subject_ref.clone(),
+        capability_refs: vec![constitute_protocol::CAPABILITY_SERVICE_MANAGE.to_string()],
+        grant_refs: spec.grant_refs.clone(),
+        input_refs: vec![operation.operation_id.clone()],
+        output_refs: vec![format!("output:service-manager:{}", operation.operation_id)],
+        evidence_refs: operation.evidence_refs.clone(),
+        lifecycle_plan_refs: vec![lifecycle_plan_id(spec, operation)],
+        release_refs: spec.release_ref.clone().into_iter().collect(),
+        resource_posture: operation.resource_posture.clone(),
+        blocked_reasons,
+        safe_facts: json!({
+            "role": FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
+            "operation": operation.operation,
+            "serviceId": spec.service_id
+        }),
+        observed_at,
+        expires_at: Some(observed_at + 3600),
+    };
+    validate_host_fabric_member_contribution(&contribution)?;
+    Ok(Some(contribution))
+}
+
+fn lifecycle_phase(
+    phase: &str,
+    state: &str,
+    evidence_ref: String,
+    output_refs: Vec<String>,
+    blocked_reasons: Vec<String>,
+) -> LifecyclePhasePosture {
+    LifecyclePhasePosture {
+        phase: phase.to_string(),
+        state: state.to_string(),
+        evidence_refs: vec![evidence_ref],
+        output_refs,
+        blocked_reasons,
+        safe_facts: json!({ "phase": phase, "state": state }),
+    }
+}
+
+pub fn build_lifecycle_plan_for_spec(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+    member_contribution_refs: Vec<String>,
+    observed_at: u64,
+    blocked_reasons: Vec<String>,
+) -> Result<LifecyclePlanPosture> {
+    let mut blocked_reasons = blocked_reasons;
+    blocked_reasons.extend(host_fabric_contract_blockers(spec));
+    if member_contribution_refs.is_empty() {
+        blocked_reasons.push("hostFabric:missingMemberContribution".to_string());
+    }
+    let blocked_reasons = normalize_blockers(blocked_reasons);
+    let plan_state = if blocked_reasons.is_empty() {
+        FABRIC_LIFECYCLE_PLAN_READY
+    } else {
+        FABRIC_LIFECYCLE_PLAN_BLOCKED
+    };
+    let build_blockers = if spec.build_ref.is_some() {
+        vec![]
+    } else {
+        vec!["buildRef:missing".to_string()]
+    };
+    let release_blockers = if spec.release_ref.is_some() {
+        vec![]
+    } else {
+        vec!["releaseRef:missing".to_string()]
+    };
+    let rollback_blockers = if rollback_required_for(&operation.operation)
+        && spec.rollback_required
+        && spec.rollback_ref.is_none()
+    {
+        vec!["rollbackRequired".to_string()]
+    } else {
+        vec![]
+    };
+    let run_state = if matches!(
+        operation.operation.as_str(),
+        SERVICE_MANAGER_OPERATION_START
+            | SERVICE_MANAGER_OPERATION_RESTART
+            | SERVICE_MANAGER_OPERATION_HEALTH_CHECK
+            | SERVICE_MANAGER_OPERATION_PROMOTE
+    ) && operation.state == SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED
+    {
+        FABRIC_LIFECYCLE_PHASE_RUNNING
+    } else if operation.operation == SERVICE_MANAGER_OPERATION_STOP {
+        FABRIC_LIFECYCLE_PHASE_NOT_REQUIRED
+    } else {
+        FABRIC_LIFECYCLE_PHASE_READY
+    };
+    let phases = vec![
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_SOURCE,
+            FABRIC_LIFECYCLE_PHASE_READY,
+            format!("evidence:source:{}", spec.service_id),
+            spec.app_contract_ref.clone().into_iter().collect(),
+            vec![],
+        ),
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_BUILD,
+            if build_blockers.is_empty() {
+                FABRIC_LIFECYCLE_PHASE_READY
+            } else {
+                FABRIC_LIFECYCLE_PHASE_BLOCKED
+            },
+            format!("evidence:build:{}", spec.service_id),
+            spec.build_ref.clone().into_iter().collect(),
+            build_blockers,
+        ),
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_RELEASE,
+            if release_blockers.is_empty() {
+                FABRIC_LIFECYCLE_PHASE_READY
+            } else {
+                FABRIC_LIFECYCLE_PHASE_BLOCKED
+            },
+            format!("evidence:release:{}", spec.service_id),
+            spec.release_ref.clone().into_iter().collect(),
+            release_blockers,
+        ),
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_LOAD,
+            FABRIC_LIFECYCLE_PHASE_SUCCEEDED,
+            format!("evidence:load:{}", spec.service_id),
+            vec![operation.operation_id.clone()],
+            vec![],
+        ),
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_RUN,
+            run_state,
+            format!("evidence:run:{}", spec.service_id),
+            vec![operation.operation_id.clone()],
+            vec![],
+        ),
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_OBSERVE,
+            FABRIC_LIFECYCLE_PHASE_READY,
+            format!("evidence:observe:{}", spec.service_id),
+            operation.evidence_refs.clone(),
+            vec![],
+        ),
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_ROLLBACK,
+            if rollback_blockers.is_empty() {
+                FABRIC_LIFECYCLE_PHASE_READY
+            } else {
+                FABRIC_LIFECYCLE_PHASE_BLOCKED
+            },
+            format!("evidence:rollback:{}", spec.service_id),
+            spec.rollback_ref.clone().into_iter().collect(),
+            rollback_blockers,
+        ),
+        lifecycle_phase(
+            FABRIC_LIFECYCLE_PHASE_CLEANUP,
+            FABRIC_LIFECYCLE_PHASE_NOT_REQUIRED,
+            format!("evidence:cleanup:{}", spec.service_id),
+            vec![],
+            vec![],
+        ),
+    ];
+    let lifecycle = LifecyclePlanPosture {
+        kind: Some(RECORD_LIFECYCLE_PLAN_POSTURE.to_string()),
+        lifecycle_plan_id: lifecycle_plan_id(spec, operation),
+        subject_ref: spec.subject_ref.clone(),
+        contract_ref: spec.lifecycle_contract_ref.clone(),
+        state: plan_state.to_string(),
+        lifecycle_contract_refs: vec![spec.lifecycle_contract_ref.clone()],
+        phase_postures: phases,
+        member_contribution_refs,
+        evidence_refs: vec![format!("evidence:lifecycle-plan:{}", spec.service_id)],
+        release_refs: spec.release_ref.clone().into_iter().collect(),
+        blocked_reasons,
+        safe_facts: json!({
+            "serviceId": spec.service_id,
+            "operation": operation.operation,
+            "state": plan_state
+        }),
+        observed_at,
+        expires_at: Some(observed_at + 3600),
+    };
+    validate_lifecycle_plan_posture(&lifecycle)?;
+    Ok(lifecycle)
+}
+
+pub fn build_host_fabric_fulfillment_plan_for_spec(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+    member_contribution_refs: Vec<String>,
+    lifecycle_plan_refs: Vec<String>,
+    observed_at: u64,
+    blocked_reasons: Vec<String>,
+) -> Result<HostFabricFulfillmentPlan> {
+    let mut blocked_reasons = blocked_reasons;
+    blocked_reasons.extend(host_fabric_contract_blockers(spec));
+    let missing_role_refs = if member_contribution_refs.is_empty() {
+        vec![format!("role:{FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER}")]
+    } else {
+        vec![]
+    };
+    if !missing_role_refs.is_empty() {
+        blocked_reasons.push("hostFabric:missingHostServiceAdapter".to_string());
+    }
+    let blocked_reasons = normalize_blockers(blocked_reasons);
+    let state = if blocked_reasons.is_empty() {
+        FABRIC_FULFILLMENT_PLAN_READY
+    } else {
+        FABRIC_FULFILLMENT_PLAN_BLOCKED
+    };
+    let materialization_budget_refs = if spec.materialization_budget_refs.is_empty() {
+        vec!["materialization-budget:service-manager".to_string()]
+    } else {
+        spec.materialization_budget_refs.clone()
+    };
+    let plan = HostFabricFulfillmentPlan {
+        kind: Some(RECORD_HOST_FABRIC_FULFILLMENT_PLAN.to_string()),
+        plan_id: host_fabric_fulfillment_plan_id(spec, operation),
+        fabric_ref: spec.fabric_ref.clone(),
+        host_ref: spec.host_ref.clone().unwrap_or_default(),
+        contract_ref: spec.host_adapter_ref.clone(),
+        state: state.to_string(),
+        required_role_refs: vec![format!("role:{FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER}")],
+        member_contribution_refs,
+        missing_role_refs,
+        lifecycle_plan_refs,
+        materialization_budget_refs,
+        association_handoff_ref: spec.association_handoff_ref.clone(),
+        evidence_refs: vec![format!("evidence:host-fabric-plan:{}", spec.service_id)],
+        blocked_reasons,
+        safe_facts: json!({
+            "serviceId": spec.service_id,
+            "operation": operation.operation,
+            "state": state
+        }),
+        observed_at,
+        expires_at: Some(observed_at + 3600),
+    };
+    validate_host_fabric_fulfillment_plan(&plan)?;
+    Ok(plan)
 }
 
 pub fn build_proof_digest(
@@ -871,9 +1252,41 @@ pub fn apply_service_operation(
         request.requested_at + 80,
         blocked_reasons.clone(),
     )?;
+    let host_fabric_contribution = build_host_fabric_member_contribution_for_spec(
+        &spec,
+        &operation_posture,
+        request.requested_at + 90,
+        blocked_reasons.clone(),
+    )?;
+    let member_contribution_refs = host_fabric_contribution
+        .as_ref()
+        .map(|contribution| vec![contribution.contribution_id.clone()])
+        .unwrap_or_default();
+    let lifecycle_plan = build_lifecycle_plan_for_spec(
+        &spec,
+        &operation_posture,
+        member_contribution_refs.clone(),
+        request.requested_at + 100,
+        blocked_reasons.clone(),
+    )?;
+    let host_fabric_fulfillment_plan = build_host_fabric_fulfillment_plan_for_spec(
+        &spec,
+        &operation_posture,
+        member_contribution_refs,
+        vec![lifecycle_plan.lifecycle_plan_id.clone()],
+        request.requested_at + 110,
+        blocked_reasons.clone(),
+    )?;
     state.operations.push(operation_posture.clone());
     state.proof_digests.push(proof_digest.clone());
-    state.updated_at = request.requested_at + 80;
+    if let Some(contribution) = &host_fabric_contribution {
+        state.host_fabric_contributions.push(contribution.clone());
+    }
+    state.lifecycle_plans.push(lifecycle_plan.clone());
+    state
+        .host_fabric_fulfillment_plans
+        .push(host_fabric_fulfillment_plan.clone());
+    state.updated_at = request.requested_at + 110;
     let posture = service_manager_status(state, &spec.service_id, state.updated_at)?;
     state.posture = Some(posture.clone());
 
@@ -885,6 +1298,9 @@ pub fn apply_service_operation(
         blocked_reasons,
         operation_posture,
         proof_digest,
+        host_fabric_contribution,
+        lifecycle_plan,
+        host_fabric_fulfillment_plan,
         posture,
     })
 }
@@ -948,6 +1364,15 @@ fn operation_blocked_reasons(
     }
     if spec.resource_memory_mib == 0 || spec.resource_cpu_pct == 0 {
         blocked_reasons.push("resourceBudget:missing".to_string());
+    }
+    if spec.fabric_ref.trim().is_empty() {
+        blocked_reasons.push("fabricRef:missing".to_string());
+    }
+    if spec.host_adapter_ref.trim().is_empty() {
+        blocked_reasons.push("hostAdapterRef:missing".to_string());
+    }
+    if spec.lifecycle_contract_ref.trim().is_empty() {
+        blocked_reasons.push("lifecycleContractRef:missing".to_string());
     }
     blocked_reasons
 }
@@ -1115,6 +1540,34 @@ pub fn service_manager_lifecycle_fixture(issued_at: u64) -> Result<ServiceManage
         vec![],
     )?];
     let secret_boundary = build_secret_boundary(issued_at);
+    let spec = default_managed_service_spec();
+    let lifecycle_operation = operations
+        .iter()
+        .find(|operation| operation.operation == SERVICE_MANAGER_OPERATION_START)
+        .expect("start operation")
+        .clone();
+    let host_fabric_contribution = build_host_fabric_member_contribution_for_spec(
+        &spec,
+        &lifecycle_operation,
+        issued_at + 5000,
+        vec![],
+    )?
+    .ok_or_else(|| anyhow!("default lifecycle fixture requires host-fabric member contribution"))?;
+    let lifecycle_plan = build_lifecycle_plan_for_spec(
+        &spec,
+        &lifecycle_operation,
+        vec![host_fabric_contribution.contribution_id.clone()],
+        issued_at + 5010,
+        vec![],
+    )?;
+    let host_fabric_fulfillment_plan = build_host_fabric_fulfillment_plan_for_spec(
+        &spec,
+        &lifecycle_operation,
+        vec![host_fabric_contribution.contribution_id.clone()],
+        vec![lifecycle_plan.lifecycle_plan_id.clone()],
+        issued_at + 5020,
+        vec![],
+    )?;
     let posture = reduce_protected_service_manager_posture(
         &secret_boundary,
         &release_contract,
@@ -1133,6 +1586,9 @@ pub fn service_manager_lifecycle_fixture(issued_at: u64) -> Result<ServiceManage
         proof_digests,
         lab_proofs,
         train_digests,
+        host_fabric_contributions: vec![host_fabric_contribution],
+        lifecycle_plans: vec![lifecycle_plan],
+        host_fabric_fulfillment_plans: vec![host_fabric_fulfillment_plan],
         posture,
     };
     validate_fixture(&fixture)?;
@@ -1181,6 +1637,34 @@ pub fn blocked_operation_fixture(
         vec![reason.to_string()],
     )?];
     let secret_boundary = build_secret_boundary(requested_at);
+    let spec = default_managed_service_spec();
+    let host_fabric_contribution = build_host_fabric_member_contribution_for_spec(
+        &spec,
+        &operation,
+        requested_at + 220,
+        vec![reason.to_string()],
+    )?
+    .into_iter()
+    .collect::<Vec<_>>();
+    let member_contribution_refs = host_fabric_contribution
+        .iter()
+        .map(|contribution| contribution.contribution_id.clone())
+        .collect::<Vec<_>>();
+    let lifecycle_plan = build_lifecycle_plan_for_spec(
+        &spec,
+        &operation,
+        member_contribution_refs.clone(),
+        requested_at + 230,
+        vec![reason.to_string()],
+    )?;
+    let host_fabric_fulfillment_plan = build_host_fabric_fulfillment_plan_for_spec(
+        &spec,
+        &operation,
+        member_contribution_refs,
+        vec![lifecycle_plan.lifecycle_plan_id.clone()],
+        requested_at + 240,
+        vec![reason.to_string()],
+    )?;
     let posture = reduce_protected_service_manager_posture(
         &secret_boundary,
         &release_contract,
@@ -1199,6 +1683,9 @@ pub fn blocked_operation_fixture(
         proof_digests: vec![proof_digest],
         lab_proofs,
         train_digests,
+        host_fabric_contributions: host_fabric_contribution,
+        lifecycle_plans: vec![lifecycle_plan],
+        host_fabric_fulfillment_plans: vec![host_fabric_fulfillment_plan],
         posture,
     };
     validate_fixture(&fixture)?;
@@ -1219,6 +1706,15 @@ pub fn validate_fixture(fixture: &ServiceManagerLifecycleFixture) -> Result<()> 
     }
     for train_digest in &fixture.train_digests {
         validate_service_manager_train_digest(train_digest)?;
+    }
+    for contribution in &fixture.host_fabric_contributions {
+        validate_host_fabric_member_contribution(contribution)?;
+    }
+    for lifecycle_plan in &fixture.lifecycle_plans {
+        validate_lifecycle_plan_posture(lifecycle_plan)?;
+    }
+    for fulfillment_plan in &fixture.host_fabric_fulfillment_plans {
+        validate_host_fabric_fulfillment_plan(fulfillment_plan)?;
     }
     validate_service_manager_posture(&fixture.posture)
 }
