@@ -119,11 +119,19 @@ pub struct ManagedServiceSpec {
     #[serde(default)]
     pub source_snapshot_refs: Vec<String>,
     #[serde(default)]
+    pub source_operation_refs: Vec<String>,
+    #[serde(default)]
     pub project_refs: Vec<String>,
     #[serde(default)]
     pub work_item_refs: Vec<String>,
     #[serde(default)]
+    pub build_run_refs: Vec<String>,
+    #[serde(default)]
+    pub build_artifact_refs: Vec<String>,
+    #[serde(default)]
     pub build_proof_refs: Vec<String>,
+    #[serde(default)]
+    pub release_candidate_refs: Vec<String>,
     pub release_ref: Option<String>,
     pub rollback_ref: Option<String>,
     pub rollback_required: bool,
@@ -249,9 +257,16 @@ pub fn default_managed_service_spec() -> ManagedServiceSpec {
         content_index_refs: vec!["content-index:source:lab-service".to_string()],
         source_graph_refs: vec!["source:graph:lab-service".to_string()],
         source_snapshot_refs: vec!["source:snapshot:lab-service:current".to_string()],
+        source_operation_refs: vec![
+            "source:operation:lab-service:ref-update".to_string(),
+            "source:operation:lab-service:project-link".to_string(),
+        ],
         project_refs: vec!["project:constituency".to_string()],
         work_item_refs: vec!["work-item:service-manager:lifecycle".to_string()],
+        build_run_refs: vec!["build:run:lab-service:current".to_string()],
+        build_artifact_refs: vec!["build:artifact:lab-service:module".to_string()],
         build_proof_refs: vec!["build-proof:lab-service:current".to_string()],
+        release_candidate_refs: vec!["release:candidate:lab-service:current".to_string()],
         release_ref: Some("release:lab-service:current".to_string()),
         rollback_ref: Some("rollback:lab-service:previous".to_string()),
         rollback_required: true,
@@ -322,12 +337,7 @@ pub fn build_release_contract(issued_at: u64) -> ServiceManagerReleaseContractRe
     build_release_contract_with_refs(issued_at, vec![], vec![])
 }
 
-pub fn build_release_contract_for_spec(
-    spec: &ManagedServiceSpec,
-    issued_at: u64,
-    proof_digest_refs: Vec<String>,
-    lab_proof_refs: Vec<String>,
-) -> ServiceManagerReleaseContractRecord {
+fn release_contract_blockers_for_spec(spec: &ManagedServiceSpec) -> Vec<String> {
     let mut blocked_reasons = Vec::new();
     if spec.release_ref.is_none() {
         blocked_reasons.push("releaseContract:missingReleaseRef".to_string());
@@ -338,6 +348,35 @@ pub fn build_release_contract_for_spec(
     if spec.secret_refs.is_empty() {
         blocked_reasons.push("releaseContract:missingSecretBoundary".to_string());
     }
+    if spec.source_operation_refs.is_empty() {
+        blocked_reasons.push("releaseContract:missingSourceOperationRefs".to_string());
+    }
+    if spec.build_run_refs.is_empty() {
+        blocked_reasons.push("releaseContract:missingBuildRunRefs".to_string());
+    }
+    if spec.build_artifact_refs.is_empty() {
+        blocked_reasons.push("releaseContract:missingBuildArtifactRefs".to_string());
+    }
+    if spec.build_proof_refs.is_empty() {
+        blocked_reasons.push("releaseContract:missingBuildProofRefs".to_string());
+    }
+    if spec.release_candidate_refs.is_empty() {
+        blocked_reasons.push("releaseContract:missingReleaseCandidateRefs".to_string());
+    }
+    normalize_blockers(blocked_reasons)
+}
+
+fn release_ready_for_spec(spec: &ManagedServiceSpec) -> bool {
+    release_contract_blockers_for_spec(spec).is_empty()
+}
+
+pub fn build_release_contract_for_spec(
+    spec: &ManagedServiceSpec,
+    issued_at: u64,
+    proof_digest_refs: Vec<String>,
+    lab_proof_refs: Vec<String>,
+) -> ServiceManagerReleaseContractRecord {
+    let blocked_reasons = release_contract_blockers_for_spec(spec);
     let state = if blocked_reasons.is_empty() {
         SURFACE_APP_CONTRACT_STATE_READY
     } else {
@@ -356,9 +395,13 @@ pub fn build_release_contract_for_spec(
         content_index_refs: spec.content_index_refs.clone(),
         source_graph_refs: spec.source_graph_refs.clone(),
         source_snapshot_refs: spec.source_snapshot_refs.clone(),
+        source_operation_refs: spec.source_operation_refs.clone(),
         project_refs: spec.project_refs.clone(),
         work_item_refs: spec.work_item_refs.clone(),
+        build_run_refs: spec.build_run_refs.clone(),
+        build_artifact_refs: spec.build_artifact_refs.clone(),
         build_proof_refs: spec.build_proof_refs.clone(),
+        release_candidate_refs: spec.release_candidate_refs.clone(),
         release_ref: spec.release_ref.clone(),
         rollback_ref: spec.rollback_ref.clone(),
         rollback_required: Some(spec.rollback_required),
@@ -376,9 +419,13 @@ pub fn build_release_contract_for_spec(
             "contentIndexRefs": spec.content_index_refs,
             "sourceGraphRefs": spec.source_graph_refs,
             "sourceSnapshotRefs": spec.source_snapshot_refs,
+            "sourceOperationRefs": spec.source_operation_refs,
             "projectRefs": spec.project_refs,
             "workItemRefs": spec.work_item_refs,
-            "buildProofRefs": spec.build_proof_refs
+            "buildRunRefs": spec.build_run_refs,
+            "buildArtifactRefs": spec.build_artifact_refs,
+            "buildProofRefs": spec.build_proof_refs,
+            "releaseCandidateRefs": spec.release_candidate_refs
         }),
         issued_at,
         expires_at: Some(issued_at + 3600),
@@ -472,17 +519,21 @@ pub fn build_operation_posture_for_spec(
             "authorityRefs": spec.authority_refs
         }),
         release_posture: json!({
-            "state": if spec.release_ref.is_some() { "releaseReady" } else { "blocked" },
+            "state": if release_ready_for_spec(spec) { "releaseReady" } else { "blocked" },
             "buildRef": spec.build_ref,
             "contentIndexRefs": spec.content_index_refs,
             "sourceGraphRefs": spec.source_graph_refs,
             "sourceSnapshotRefs": spec.source_snapshot_refs,
+            "sourceOperationRefs": spec.source_operation_refs,
             "projectRefs": spec.project_refs,
             "workItemRefs": spec.work_item_refs,
+            "buildRunRefs": spec.build_run_refs,
+            "buildArtifactRefs": spec.build_artifact_refs,
             "buildProofRefs": spec.build_proof_refs,
+            "releaseCandidateRefs": spec.release_candidate_refs,
             "releaseRef": spec.release_ref,
             "rollbackRef": spec.rollback_ref,
-            "blockedReasons": if spec.release_ref.is_some() { Vec::<String>::new() } else { vec!["releaseContract:missingReleaseRef".to_string()] }
+            "blockedReasons": release_contract_blockers_for_spec(spec)
         }),
         rollback_posture: json!({
             "state": if !spec.rollback_required || spec.rollback_ref.is_some() { "rollbackReady" } else { "blocked" },
@@ -605,12 +656,16 @@ fn source_input_refs(spec: &ManagedServiceSpec) -> Vec<String> {
     refs.extend(spec.source_graph_refs.clone());
     refs.extend(spec.source_snapshot_refs.clone());
     refs.extend(spec.content_index_refs.clone());
+    refs.extend(spec.source_operation_refs.clone());
     refs
 }
 
 fn build_input_refs(spec: &ManagedServiceSpec) -> Vec<String> {
     let mut refs = optional_ref(&spec.build_ref);
+    refs.extend(spec.build_run_refs.clone());
+    refs.extend(spec.build_artifact_refs.clone());
     refs.extend(spec.build_proof_refs.clone());
+    refs.extend(spec.release_candidate_refs.clone());
     refs
 }
 
@@ -647,8 +702,12 @@ fn contract_target_capability_slot_refs(spec: &ManagedServiceSpec, operation: &s
         "slot:source".to_string(),
         "slot:content-index".to_string(),
         "slot:source-graph".to_string(),
+        "slot:source-operation".to_string(),
         "slot:build".to_string(),
+        "slot:build-run".to_string(),
+        "slot:build-artifact".to_string(),
         "slot:build-proof".to_string(),
+        "slot:release-candidate".to_string(),
         "slot:project-work".to_string(),
         "slot:release".to_string(),
         "slot:runner".to_string(),
@@ -676,14 +735,26 @@ fn contract_target_missing_slot_refs(spec: &ManagedServiceSpec, operation: &str)
     if spec.source_graph_refs.is_empty() {
         refs.push("slot:source-graph".to_string());
     }
+    if spec.source_operation_refs.is_empty() {
+        refs.push("slot:source-operation".to_string());
+    }
     if spec.content_index_refs.is_empty() {
         refs.push("slot:content-index".to_string());
     }
     if spec.build_ref.is_none() {
         refs.push("slot:build".to_string());
     }
+    if spec.build_run_refs.is_empty() {
+        refs.push("slot:build-run".to_string());
+    }
+    if spec.build_artifact_refs.is_empty() {
+        refs.push("slot:build-artifact".to_string());
+    }
     if spec.build_proof_refs.is_empty() {
         refs.push("slot:build-proof".to_string());
+    }
+    if spec.release_candidate_refs.is_empty() {
+        refs.push("slot:release-candidate".to_string());
     }
     if spec.project_refs.is_empty() && spec.work_item_refs.is_empty() {
         refs.push("slot:project-work".to_string());
@@ -865,11 +936,13 @@ pub fn build_lifecycle_plan_for_spec(
     } else {
         vec!["buildRef:missing".to_string()]
     };
-    let release_blockers = if spec.release_ref.is_some() {
-        vec![]
-    } else {
-        vec!["releaseRef:missing".to_string()]
-    };
+    let mut release_blockers = Vec::new();
+    if spec.release_ref.is_none() {
+        release_blockers.push("releaseRef:missing".to_string());
+    }
+    if spec.release_candidate_refs.is_empty() {
+        release_blockers.push("releaseCandidateRefs:missing".to_string());
+    }
     let rollback_blockers = if rollback_required_for(&operation.operation)
         && spec.rollback_required
         && spec.rollback_ref.is_none()
@@ -919,7 +992,11 @@ pub fn build_lifecycle_plan_for_spec(
                 FABRIC_LIFECYCLE_PHASE_BLOCKED
             },
             format!("evidence:release:{}", spec.service_id),
-            spec.release_ref.clone().into_iter().collect(),
+            {
+                let mut refs = optional_ref(&spec.release_ref);
+                refs.extend(spec.release_candidate_refs.clone());
+                refs
+            },
             release_blockers,
         ),
         lifecycle_phase(
@@ -1400,6 +1477,11 @@ pub fn build_contract_target_registry_posture_for_spec(
         format!("evidence:source-graph:{}", spec.service_id),
     ));
     slot_postures.push(target_slot_from_optional_ref(
+        "slot:source-operation",
+        first_ref(&spec.source_operation_refs),
+        format!("evidence:source-operation:{}", spec.service_id),
+    ));
+    slot_postures.push(target_slot_from_optional_ref(
         "slot:content-index",
         first_ref(&spec.content_index_refs),
         format!("evidence:content-index:{}", spec.service_id),
@@ -1410,9 +1492,24 @@ pub fn build_contract_target_registry_posture_for_spec(
         format!("evidence:build:{}", spec.service_id),
     ));
     slot_postures.push(target_slot_from_optional_ref(
+        "slot:build-run",
+        first_ref(&spec.build_run_refs),
+        format!("evidence:build-run:{}", spec.service_id),
+    ));
+    slot_postures.push(target_slot_from_optional_ref(
+        "slot:build-artifact",
+        first_ref(&spec.build_artifact_refs),
+        format!("evidence:build-artifact:{}", spec.service_id),
+    ));
+    slot_postures.push(target_slot_from_optional_ref(
         "slot:build-proof",
         first_ref(&spec.build_proof_refs),
         format!("evidence:build-proof:{}", spec.service_id),
+    ));
+    slot_postures.push(target_slot_from_optional_ref(
+        "slot:release-candidate",
+        first_ref(&spec.release_candidate_refs),
+        format!("evidence:release-candidate:{}", spec.service_id),
     ));
     slot_postures.push(target_slot_from_optional_ref(
         "slot:project-work",
@@ -1924,20 +2021,24 @@ pub fn reduce_service_manager_posture_for_spec(
             "authorityRefs": spec.authority_refs
         }),
         release_posture: json!({
-            "state": if spec.release_ref.is_some() { "releaseReady" } else { "blocked" },
+            "state": if release_ready_for_spec(spec) { "releaseReady" } else { "blocked" },
             "appContractRef": spec.app_contract_ref,
             "version": spec.version,
             "buildRef": spec.build_ref,
             "contentIndexRefs": spec.content_index_refs,
             "sourceGraphRefs": spec.source_graph_refs,
             "sourceSnapshotRefs": spec.source_snapshot_refs,
+            "sourceOperationRefs": spec.source_operation_refs,
             "projectRefs": spec.project_refs,
             "workItemRefs": spec.work_item_refs,
+            "buildRunRefs": spec.build_run_refs,
+            "buildArtifactRefs": spec.build_artifact_refs,
             "buildProofRefs": spec.build_proof_refs,
+            "releaseCandidateRefs": spec.release_candidate_refs,
             "releaseRef": spec.release_ref,
             "rollbackRef": spec.rollback_ref,
             "rollbackRequired": spec.rollback_required,
-            "blockedReasons": if spec.release_ref.is_some() { Vec::<String>::new() } else { vec!["releaseContract:missingReleaseRef".to_string()] }
+            "blockedReasons": release_contract_blockers_for_spec(spec)
         }),
         rollback_posture: json!({
             "state": if !spec.rollback_required || spec.rollback_ref.is_some() { "rollbackReady" } else { "blocked" },
@@ -2073,9 +2174,13 @@ pub fn reduce_protected_service_manager_posture(
         "contentIndexRefs": release_contract.content_index_refs,
         "sourceGraphRefs": release_contract.source_graph_refs,
         "sourceSnapshotRefs": release_contract.source_snapshot_refs,
+        "sourceOperationRefs": release_contract.source_operation_refs,
         "projectRefs": release_contract.project_refs,
         "workItemRefs": release_contract.work_item_refs,
+        "buildRunRefs": release_contract.build_run_refs,
+        "buildArtifactRefs": release_contract.build_artifact_refs,
         "buildProofRefs": release_contract.build_proof_refs,
+        "releaseCandidateRefs": release_contract.release_candidate_refs,
         "releaseRef": release_contract.release_ref,
         "rollbackRef": release_contract.rollback_ref,
         "rollbackRequired": release_contract.rollback_required.unwrap_or(true),
@@ -2483,12 +2588,8 @@ fn initial_service_manager_posture(
     if spec.secret_refs.is_empty() {
         blocked_reasons.push("secretBoundary:missingSecretRefs".to_string());
     }
-    if spec.release_ref.is_none() {
-        blocked_reasons.push("releaseContract:missingReleaseRef".to_string());
-    }
-    if spec.rollback_required && spec.rollback_ref.is_none() {
-        blocked_reasons.push("rollbackRequired".to_string());
-    }
+    blocked_reasons.extend(release_contract_blockers_for_spec(spec));
+    blocked_reasons = normalize_blockers(blocked_reasons);
     let posture = ServiceManagerPostureRecord {
         kind: Some(RECORD_SERVICE_MANAGER_POSTURE.to_string()),
         manager_id: spec.manager_id.clone(),
@@ -2514,20 +2615,24 @@ fn initial_service_manager_posture(
             "authorityRefs": spec.authority_refs
         }),
         release_posture: json!({
-            "state": if spec.release_ref.is_some() { "releaseReady" } else { "blocked" },
+            "state": if release_ready_for_spec(spec) { "releaseReady" } else { "blocked" },
             "appContractRef": spec.app_contract_ref,
             "version": spec.version,
             "buildRef": spec.build_ref,
             "contentIndexRefs": spec.content_index_refs,
             "sourceGraphRefs": spec.source_graph_refs,
             "sourceSnapshotRefs": spec.source_snapshot_refs,
+            "sourceOperationRefs": spec.source_operation_refs,
             "projectRefs": spec.project_refs,
             "workItemRefs": spec.work_item_refs,
+            "buildRunRefs": spec.build_run_refs,
+            "buildArtifactRefs": spec.build_artifact_refs,
             "buildProofRefs": spec.build_proof_refs,
+            "releaseCandidateRefs": spec.release_candidate_refs,
             "releaseRef": spec.release_ref,
             "rollbackRef": spec.rollback_ref,
             "rollbackRequired": spec.rollback_required,
-            "blockedReasons": if spec.release_ref.is_some() { Vec::<String>::new() } else { vec!["releaseContract:missingReleaseRef".to_string()] }
+            "blockedReasons": release_contract_blockers_for_spec(spec)
         }),
         rollback_posture: json!({
             "state": if !spec.rollback_required || spec.rollback_ref.is_some() { "rollbackReady" } else { "blocked" },

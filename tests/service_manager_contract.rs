@@ -96,8 +96,32 @@ fn lifecycle_fixture_covers_manager_operations() {
     assert!(
         fixture
             .release_contract
+            .source_operation_refs
+            .contains(&"source:operation:lab-service:ref-update".to_string())
+    );
+    assert!(
+        fixture
+            .release_contract
             .project_refs
             .contains(&"project:constituency".to_string())
+    );
+    assert!(
+        fixture
+            .release_contract
+            .build_run_refs
+            .contains(&"build:run:lab-service:current".to_string())
+    );
+    assert!(
+        fixture
+            .release_contract
+            .build_artifact_refs
+            .contains(&"build:artifact:lab-service:module".to_string())
+    );
+    assert!(
+        fixture
+            .release_contract
+            .release_candidate_refs
+            .contains(&"release:candidate:lab-service:current".to_string())
     );
     assert!(
         fixture.host_fabric_contributions[0]
@@ -107,17 +131,27 @@ fn lifecycle_fixture_covers_manager_operations() {
     assert!(
         fixture.host_fabric_contributions[0]
             .input_refs
+            .contains(&"source:operation:lab-service:project-link".to_string())
+    );
+    assert!(
+        fixture.host_fabric_contributions[0]
+            .input_refs
             .contains(&"build-proof:lab-service:current".to_string())
+    );
+    assert!(
+        fixture.host_fabric_contributions[0]
+            .input_refs
+            .contains(&"release:candidate:lab-service:current".to_string())
     );
     assert!(
         fixture.target_registry_postures[0]
             .source_refs
-            .contains(&"content-index:source:lab-service".to_string())
+            .contains(&"source:operation:lab-service:ref-update".to_string())
     );
     assert!(
         fixture.target_registry_postures[0]
             .build_refs
-            .contains(&"build-proof:lab-service:current".to_string())
+            .contains(&"release:candidate:lab-service:current".to_string())
     );
     let content_index_slot = fixture.target_registry_postures[0]
         .slot_postures
@@ -126,6 +160,24 @@ fn lifecycle_fixture_covers_manager_operations() {
         .expect("content-index slot");
     assert_eq!(
         content_index_slot.state,
+        constitute_protocol::FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE
+    );
+    let source_operation_slot = fixture.target_registry_postures[0]
+        .slot_postures
+        .iter()
+        .find(|slot| slot.slot_ref == "slot:source-operation")
+        .expect("source-operation slot");
+    assert_eq!(
+        source_operation_slot.state,
+        constitute_protocol::FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE
+    );
+    let release_candidate_slot = fixture.target_registry_postures[0]
+        .slot_postures
+        .iter()
+        .find(|slot| slot.slot_ref == "slot:release-candidate")
+        .expect("release-candidate slot");
+    assert_eq!(
+        release_candidate_slot.state,
         constitute_protocol::FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE
     );
 
