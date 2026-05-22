@@ -5,6 +5,9 @@ Rust service lifecycle boundary for Constitution.
 `constitute-service-manager` emits protocol-validated service-manager
 operations, proof digests, and posture records for install, update, start, stop,
 restart, release, rollback, secret readiness, health checks, and promotion.
+It also emits a lab Linux contract-target fixture that keeps host-side gateway,
+storage, service-manager, and NVR service slots separate from client-side
+runtime/surface proof and protected lab automation posture.
 
 It does not own service domain semantics. Services own domain execution;
 protocol owns record grammar; fabric reduces host composition; the service
@@ -20,6 +23,7 @@ service-domain semantics into fabric.
 ```powershell
 cargo test
 cargo run -- fixture lifecycle
+cargo run -- fixture lab-target
 cargo run -- operation --operation restart --state succeeded
 cargo run -- init --state target/service-manager-state.json
 cargo run -- run --state target/service-manager-state.json --operation start

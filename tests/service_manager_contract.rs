@@ -4,6 +4,9 @@ use constitute_fabric::{
     reduce_host_fabric_shadow_parity,
 };
 use constitute_protocol::{
+    FABRIC_CONTRACT_TARGET_COMPATIBILITY_DEGRADED, FABRIC_CONTRACT_TARGET_REGISTRY_DEGRADED,
+    FABRIC_CONTRACT_TARGET_SELECTED, FABRIC_CONTRACT_TARGET_SLOT_DEGRADED,
+    FABRIC_CONTRACT_TARGET_SLOT_MISSING, FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED,
     FABRIC_FULFILLMENT_PLAN_BLOCKED, FABRIC_FULFILLMENT_PLAN_READY,
     FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION,
     FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER, SERVICE_MANAGER_OPERATION_RELEASE,
@@ -11,17 +14,19 @@ use constitute_protocol::{
     SERVICE_MANAGER_OPERATION_SECRET_READY, SERVICE_MANAGER_OPERATION_START,
     SERVICE_MANAGER_OPERATION_STATE_BLOCKED, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
     SERVICE_MANAGER_POSTURE_BLOCKED, SERVICE_MANAGER_POSTURE_READY,
-    SERVICE_MANAGER_PROOF_STATE_BLOCKED, SURFACE_SECRET_BOUNDARY_BLOCKED,
-    validate_host_fabric_fulfillment_plan, validate_host_fabric_member_contribution,
-    validate_lifecycle_plan_posture, validate_service_manager_operation_posture,
+    SERVICE_MANAGER_PROOF_STATE_BLOCKED, SURFACE_SECRET_BOUNDARY_BLOCKED, validate_contract_target,
+    validate_contract_target_registry_posture, validate_host_fabric_fulfillment_plan,
+    validate_host_fabric_member_contribution, validate_lifecycle_plan_posture,
+    validate_service_manager_lab_proof, validate_service_manager_operation_posture,
 };
 use constitute_service_manager::{
     ServiceOperationRequest, apply_service_operation, blocked_operation_fixture,
     build_lab_proof_with_train, build_operation_posture, build_operation_posture_for_spec,
     build_release_contract, build_release_contract_with_refs, build_secret_boundary,
-    build_train_digest, default_managed_service_spec, default_manager_state, load_manager_state,
-    reduce_protected_service_manager_posture, save_manager_state,
-    service_manager_lifecycle_fixture, service_manager_status, validate_fixture,
+    build_train_digest, default_managed_service_spec, default_manager_state,
+    lab_linux_target_fixture, load_manager_state, reduce_protected_service_manager_posture,
+    save_manager_state, service_manager_lifecycle_fixture, service_manager_status,
+    validate_fixture,
 };
 
 const DEFAULT_NOW: u64 = 1_700_000_000;
@@ -90,6 +95,75 @@ fn lifecycle_fixture_covers_manager_operations() {
         .find(|operation| operation.operation == SERVICE_MANAGER_OPERATION_ROLLBACK)
         .expect("rollback operation");
     assert!(rollback.rollback_ref.is_some());
+}
+
+#[test]
+fn lab_linux_target_fixture_keeps_client_proof_protected() {
+    let fixture = lab_linux_target_fixture(DEFAULT_NOW).expect("lab target fixture");
+    validate_contract_target(&fixture.target).expect("target validates");
+    validate_contract_target_registry_posture(&fixture.registry).expect("registry validates");
+    validate_service_manager_lab_proof(&fixture.protected_lab_proof).expect("lab proof validates");
+
+    assert_eq!(fixture.target.platform_ref, "platform:linux.lab");
+    assert_eq!(fixture.target.state, FABRIC_CONTRACT_TARGET_SELECTED);
+    assert_eq!(
+        fixture.target.compatibility_state,
+        FABRIC_CONTRACT_TARGET_COMPATIBILITY_DEGRADED
+    );
+    assert!(
+        fixture
+            .target
+            .negative_slot_refs
+            .contains(&"slot:browser-webrtc".to_string())
+    );
+    assert!(
+        fixture
+            .target
+            .missing_slot_refs
+            .contains(&"slot:runtime-client".to_string())
+    );
+    assert!(
+        fixture
+            .target
+            .missing_slot_refs
+            .contains(&"slot:lab-proof-automation".to_string())
+    );
+    assert_eq!(
+        fixture.registry.state,
+        FABRIC_CONTRACT_TARGET_REGISTRY_DEGRADED
+    );
+    assert_eq!(
+        fixture.protected_lab_proof.state,
+        SERVICE_MANAGER_PROOF_STATE_BLOCKED
+    );
+    assert!(
+        fixture
+            .protected_lab_proof
+            .blocked_reasons
+            .contains(&"blocked:lab-proof-protected-manual".to_string())
+    );
+
+    let runtime_slot = fixture
+        .registry
+        .slot_postures
+        .iter()
+        .find(|slot| slot.slot_ref == "slot:runtime-client")
+        .expect("runtime client slot");
+    assert_eq!(runtime_slot.state, FABRIC_CONTRACT_TARGET_SLOT_MISSING);
+    let browser_slot = fixture
+        .registry
+        .slot_postures
+        .iter()
+        .find(|slot| slot.slot_ref == "slot:browser-webrtc")
+        .expect("browser webrtc slot");
+    assert_eq!(browser_slot.state, FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED);
+    let rollback_slot = fixture
+        .registry
+        .slot_postures
+        .iter()
+        .find(|slot| slot.slot_ref == "slot:rollback")
+        .expect("rollback slot");
+    assert_eq!(rollback_slot.state, FABRIC_CONTRACT_TARGET_SLOT_DEGRADED);
 }
 
 #[test]
@@ -412,6 +486,25 @@ fn cli_emits_valid_lifecycle_fixture() {
         serde_json::from_slice(&output.stdout).expect("fixture json");
     assert_eq!(fixture.posture.state, SERVICE_MANAGER_POSTURE_READY);
     validate_fixture(&fixture).expect("cli fixture validates");
+}
+
+#[test]
+fn cli_emits_valid_lab_target_fixture() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_constitute-service-manager"))
+        .args(["fixture", "lab-target"])
+        .output()
+        .expect("run cli");
+    assert!(output.status.success());
+    let fixture: constitute_service_manager::LabLinuxTargetFixture =
+        serde_json::from_slice(&output.stdout).expect("fixture json");
+    assert_eq!(fixture.target.platform_ref, "platform:linux.lab");
+    assert_eq!(
+        fixture.registry.state,
+        FABRIC_CONTRACT_TARGET_REGISTRY_DEGRADED
+    );
+    validate_contract_target(&fixture.target).expect("target validates");
+    validate_contract_target_registry_posture(&fixture.registry).expect("registry validates");
+    validate_service_manager_lab_proof(&fixture.protected_lab_proof).expect("proof validates");
 }
 
 #[test]

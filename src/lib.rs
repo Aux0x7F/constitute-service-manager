@@ -2,12 +2,14 @@ use anyhow::{Result, anyhow};
 use constitute_fabric::{HostFabricReductionInput, HostFabricRoleRequirement, reduce_host_fabric};
 use constitute_protocol::{
     ContractTarget, ContractTargetRegistryPosture, ContractTargetSlotPosture,
-    FABRIC_CONTRACT_TARGET_BLOCKED, FABRIC_CONTRACT_TARGET_COMPATIBLE,
-    FABRIC_CONTRACT_TARGET_INCOMPATIBLE, FABRIC_CONTRACT_TARGET_PLATFORM_FIT_COMPATIBLE,
+    FABRIC_CONTRACT_TARGET_BLOCKED, FABRIC_CONTRACT_TARGET_COMPATIBILITY_DEGRADED,
+    FABRIC_CONTRACT_TARGET_COMPATIBLE, FABRIC_CONTRACT_TARGET_INCOMPATIBLE,
+    FABRIC_CONTRACT_TARGET_PLATFORM_FIT_COMPATIBLE, FABRIC_CONTRACT_TARGET_PLATFORM_FIT_DEGRADED,
     FABRIC_CONTRACT_TARGET_PLATFORM_FIT_UNKNOWN, FABRIC_CONTRACT_TARGET_READY,
     FABRIC_CONTRACT_TARGET_REGISTRY_BLOCKED, FABRIC_CONTRACT_TARGET_REGISTRY_DEGRADED,
-    FABRIC_CONTRACT_TARGET_REGISTRY_READY, FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE,
-    FABRIC_CONTRACT_TARGET_SLOT_BLOCKED, FABRIC_CONTRACT_TARGET_SLOT_MISSING,
+    FABRIC_CONTRACT_TARGET_REGISTRY_READY, FABRIC_CONTRACT_TARGET_SELECTED,
+    FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE, FABRIC_CONTRACT_TARGET_SLOT_BLOCKED,
+    FABRIC_CONTRACT_TARGET_SLOT_DEGRADED, FABRIC_CONTRACT_TARGET_SLOT_MISSING,
     FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED, FABRIC_FULFILLMENT_PLAN_BLOCKED,
     FABRIC_FULFILLMENT_PLAN_DEGRADED, FABRIC_FULFILLMENT_PLAN_READY,
     FABRIC_LIFECYCLE_PHASE_BLOCKED, FABRIC_LIFECYCLE_PHASE_BUILD, FABRIC_LIFECYCLE_PHASE_CLEANUP,
@@ -46,7 +48,7 @@ use constitute_protocol::{
     validate_service_manager_train_digest,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
 
@@ -78,6 +80,15 @@ pub struct ServiceManagerLifecycleFixture {
     pub lifecycle_plans: Vec<LifecyclePlanPosture>,
     pub host_fabric_fulfillment_plans: Vec<HostFabricFulfillmentPlan>,
     pub posture: ServiceManagerPostureRecord,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LabLinuxTargetFixture {
+    pub target: ContractTarget,
+    pub registry: ContractTargetRegistryPosture,
+    pub release_contract: ServiceManagerReleaseContractRecord,
+    pub protected_lab_proof: ServiceManagerLabProofRecord,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -896,6 +907,318 @@ fn target_slot_posture(
         blocked_reasons,
         safe_facts: json!({ "slot": slot_ref, "state": state }),
     }
+}
+
+fn refs(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).to_string()).collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lab_target_slot(
+    slot_ref: &str,
+    state: &str,
+    platform_fit_state: &str,
+    candidate_fulfillment_refs: Vec<String>,
+    selected_fulfillment_ref: Option<&str>,
+    source_refs: Vec<String>,
+    build_refs: Vec<String>,
+    platform_refs: Vec<String>,
+    adapter_refs: Vec<String>,
+    proof_requirement_refs: Vec<String>,
+    proof_refs: Vec<String>,
+    evidence_refs: Vec<String>,
+    blocked_reasons: Vec<String>,
+    safe_facts: Value,
+) -> ContractTargetSlotPosture {
+    ContractTargetSlotPosture {
+        slot_ref: slot_ref.to_string(),
+        state: state.to_string(),
+        platform_fit_state: platform_fit_state.to_string(),
+        candidate_fulfillment_refs,
+        selected_fulfillment_ref: selected_fulfillment_ref.map(str::to_string),
+        source_refs,
+        build_refs,
+        platform_refs,
+        adapter_refs,
+        proof_requirement_refs,
+        proof_refs,
+        evidence_refs,
+        blocked_reasons,
+        safe_facts,
+    }
+}
+
+pub fn lab_linux_target_fixture(issued_at: u64) -> Result<LabLinuxTargetFixture> {
+    let release_contract = build_release_contract_with_refs(
+        issued_at,
+        vec![],
+        vec!["lab-proof:service-manager:lab-linux-protected".to_string()],
+    );
+    let protected_lab_proof = build_lab_proof_with_train(
+        "lab-proof:service-manager:lab-linux-protected",
+        "train:lab-linux:protected-target",
+        &release_contract,
+        SERVICE_MANAGER_PROOF_STATE_BLOCKED,
+        issued_at + 300,
+        vec!["blocked:lab-proof-protected-manual".to_string()],
+    )?;
+    let missing_slot_refs = refs(&[
+        "slot:runtime-client",
+        "slot:nvr-surface",
+        "slot:lab-proof-automation",
+    ]);
+    let degraded_slot_refs = refs(&["slot:rollback"]);
+    let negative_slot_refs = refs(&["slot:browser-webrtc"]);
+    let target = ContractTarget {
+        kind: Some(RECORD_CONTRACT_TARGET.to_string()),
+        target_ref: "contract-target:home-linux-lab:msa-transition".to_string(),
+        contract_ref: "app:contract:constitute-nvr@0.1.0".to_string(),
+        profile_ref: "host-profile:home".to_string(),
+        platform_ref: "platform:linux.lab".to_string(),
+        state: FABRIC_CONTRACT_TARGET_SELECTED.to_string(),
+        compatibility_state: FABRIC_CONTRACT_TARGET_COMPATIBILITY_DEGRADED.to_string(),
+        host_ref: Some("host:lab-gateway".to_string()),
+        substrate_ref: Some("substrate:home-dev".to_string()),
+        modifier_refs: refs(&["modifier:home", "modifier:dev"]),
+        branch_refs: refs(&["branch:0x/msa-transition"]),
+        subbranch_refs: refs(&["subbranch:target-contract"]),
+        capability_slot_refs: refs(&[
+            "slot:gateway",
+            "slot:storage",
+            "slot:service-manager",
+            "slot:nvr-service",
+            "slot:runtime-client",
+            "slot:nvr-surface",
+            "slot:browser-webrtc",
+            "slot:rollback",
+            "slot:lab-proof-automation",
+        ]),
+        adapter_pack_ref: Some("adapter-pack:linux-lab-dev".to_string()),
+        adapter_refs: refs(&[
+            "adapter:host-service:linux",
+            "adapter:gateway:linux",
+            "adapter:storage:local",
+        ]),
+        negative_slot_refs,
+        missing_slot_refs,
+        degraded_slot_refs,
+        proof_profile_refs: refs(&[
+            "proof-profile:service-manager-lab",
+            "proof-profile:gateway-native-smoke",
+            "proof-profile:nvr-smoke-5s",
+        ]),
+        proof_refs: refs(&["proof:service-manager-cargo-test:20260522"]),
+        compatibility_refs: refs(&["compat:runtime-2.56", "compat:branch-family:msa-transition"]),
+        evidence_refs: refs(&[
+            "evidence:lab-target:service-manager-fixture",
+            "evidence:service-manager:target-reducer",
+            "lab-proof:service-manager:lab-linux-protected",
+        ]),
+        blocked_reasons: vec![],
+        target_audience: "developer".to_string(),
+        safe_facts: json!({
+            "profile": "home-dev",
+            "platform": "linux.lab",
+            "proofAutomation": "manualProtected"
+        }),
+        issued_at,
+        expires_at: Some(issued_at + 86_400),
+    };
+    validate_contract_target(&target)?;
+
+    let slot_postures = vec![
+        lab_target_slot(
+            "slot:gateway",
+            FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_COMPATIBLE,
+            refs(&["fulfillment:gateway:lab-dev"]),
+            Some("fulfillment:gateway:lab-dev"),
+            vec![],
+            vec![],
+            refs(&["platform:linux.lab"]),
+            refs(&["adapter:gateway:linux"]),
+            vec![],
+            vec![],
+            refs(&["evidence:gateway:lab:configured"]),
+            vec![],
+            json!({ "role": "gateway" }),
+        ),
+        lab_target_slot(
+            "slot:storage",
+            FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_COMPATIBLE,
+            refs(&["fulfillment:storage:lab-local"]),
+            Some("fulfillment:storage:lab-local"),
+            vec![],
+            vec![],
+            refs(&["platform:linux.lab"]),
+            refs(&["adapter:storage:local"]),
+            refs(&["proof-requirement:storage-availability"]),
+            vec![],
+            refs(&["evidence:storage:lab:configured"]),
+            vec![],
+            json!({ "role": "storage" }),
+        ),
+        lab_target_slot(
+            "slot:service-manager",
+            FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_COMPATIBLE,
+            refs(&["fulfillment:service-manager:lab"]),
+            Some("fulfillment:service-manager:lab"),
+            vec![],
+            refs(&["build:lab:service-manager"]),
+            refs(&["platform:linux.lab"]),
+            refs(&["adapter:host-service:linux"]),
+            vec![],
+            refs(&["proof:service-manager-cargo-test:20260522"]),
+            refs(&["evidence:service-manager:target-reducer"]),
+            vec![],
+            json!({ "role": "service-manager" }),
+        ),
+        lab_target_slot(
+            "slot:nvr-service",
+            FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_COMPATIBLE,
+            refs(&["fulfillment:nvr-service:lab-network"]),
+            Some("fulfillment:nvr-service:lab-network"),
+            vec![],
+            refs(&["build:lab:nvr-service"]),
+            refs(&["platform:linux.lab"]),
+            vec![],
+            refs(&["proof-requirement:nvr-service-live"]),
+            vec![],
+            refs(&["evidence:nvr-service:lab:configured"]),
+            vec![],
+            json!({ "role": "nvr-service" }),
+        ),
+        lab_target_slot(
+            "slot:runtime-client",
+            FABRIC_CONTRACT_TARGET_SLOT_MISSING,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_UNKNOWN,
+            vec![],
+            None,
+            refs(&["content-index:runtime-surface-client"]),
+            vec![],
+            vec![],
+            vec![],
+            refs(&["proof-requirement:client-target-selected"]),
+            vec![],
+            refs(&["evidence:runtime-client:client-target-unselected"]),
+            refs(&["blocked:lab-client-target-unselected"]),
+            json!({ "reason": "lab host target does not include a proved local client" }),
+        ),
+        lab_target_slot(
+            "slot:nvr-surface",
+            FABRIC_CONTRACT_TARGET_SLOT_MISSING,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_UNKNOWN,
+            vec![],
+            None,
+            refs(&["content-index:nvr-surface"]),
+            vec![],
+            vec![],
+            vec![],
+            refs(&["proof-requirement:surface-load"]),
+            vec![],
+            refs(&["evidence:nvr-surface:client-target-unselected"]),
+            refs(&["blocked:lab-client-target-unselected"]),
+            json!({ "reason": "surface proof belongs to a client target" }),
+        ),
+        lab_target_slot(
+            "slot:browser-webrtc",
+            FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_UNKNOWN,
+            vec![],
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            refs(&["evidence:target:browser-webrtc:not-host-slot"]),
+            vec![],
+            json!({ "reason": "lab host target" }),
+        ),
+        lab_target_slot(
+            "slot:rollback",
+            FABRIC_CONTRACT_TARGET_SLOT_DEGRADED,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_DEGRADED,
+            refs(&["fulfillment:rollback:manual"]),
+            Some("fulfillment:rollback:manual"),
+            vec![],
+            vec![],
+            refs(&["platform:linux.lab"]),
+            vec![],
+            refs(&["proof-requirement:rollback-automation"]),
+            vec![],
+            refs(&["evidence:rollback:manual"]),
+            vec![],
+            json!({ "reason": "manual rollback only" }),
+        ),
+        lab_target_slot(
+            "slot:lab-proof-automation",
+            FABRIC_CONTRACT_TARGET_SLOT_MISSING,
+            FABRIC_CONTRACT_TARGET_PLATFORM_FIT_UNKNOWN,
+            vec![],
+            None,
+            vec![],
+            vec![],
+            refs(&["platform:linux.lab"]),
+            vec![],
+            refs(&[
+                "proof-requirement:bootstrap",
+                "proof-requirement:secrets",
+                "proof-requirement:rollback",
+                "proof-requirement:lab-live",
+            ]),
+            vec![],
+            refs(&["lab-proof:service-manager:lab-linux-protected"]),
+            refs(&["blocked:lab-proof-protected-manual"]),
+            json!({ "reason": "lab proof remains protected until bootstrap, secrets, and rollback contracts automate it" }),
+        ),
+    ];
+    let registry = ContractTargetRegistryPosture {
+        kind: Some(RECORD_CONTRACT_TARGET_REGISTRY_POSTURE.to_string()),
+        registry_ref: "contract-target-registry:home-linux-lab:msa-transition".to_string(),
+        target_ref: target.target_ref.clone(),
+        contract_ref: target.contract_ref.clone(),
+        state: FABRIC_CONTRACT_TARGET_REGISTRY_DEGRADED.to_string(),
+        candidate_fulfillment_refs: slot_postures
+            .iter()
+            .flat_map(|slot| slot.candidate_fulfillment_refs.clone())
+            .collect(),
+        source_refs: refs(&[
+            "content-index:nvr-surface",
+            "content-index:runtime-surface-client",
+        ]),
+        build_refs: refs(&[
+            "build:lab:gateway",
+            "build:lab:service-manager",
+            "build:lab:nvr-service",
+        ]),
+        adapter_refs: target.adapter_refs.clone(),
+        proof_requirement_refs: refs(&[
+            "proof-requirement:bootstrap",
+            "proof-requirement:secrets",
+            "proof-requirement:rollback",
+            "proof-requirement:lab-live",
+            "proof-requirement:client-target-selected",
+        ]),
+        proof_refs: target.proof_refs.clone(),
+        evidence_refs: target.evidence_refs.clone(),
+        blocked_reasons: vec![],
+        safe_facts: target.safe_facts.clone(),
+        slot_postures,
+        observed_at: issued_at,
+        expires_at: Some(issued_at + 86_400),
+    };
+    validate_contract_target_registry_posture(&registry)?;
+    Ok(LabLinuxTargetFixture {
+        target,
+        registry,
+        release_contract,
+        protected_lab_proof,
+    })
 }
 
 fn target_slot_from_optional_ref(
