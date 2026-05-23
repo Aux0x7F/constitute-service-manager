@@ -923,6 +923,19 @@ fn source_input_refs(spec: &ManagedServiceSpec) -> Vec<String> {
     refs
 }
 
+fn host_fabric_module_refs(spec: &ManagedServiceSpec) -> Vec<String> {
+    let mut refs = vec![
+        spec.host_adapter_ref.clone(),
+        spec.lifecycle_contract_ref.clone(),
+    ];
+    refs.extend(optional_ref(&spec.app_contract_ref));
+    refs.extend(spec.build_artifact_refs.clone());
+    refs.extend(spec.processor_contract_refs.clone());
+    refs.sort();
+    refs.dedup();
+    refs
+}
+
 fn build_input_refs(spec: &ManagedServiceSpec) -> Vec<String> {
     let mut refs = optional_ref(&spec.build_ref);
     refs.extend(spec.build_run_refs.clone());
@@ -1167,10 +1180,14 @@ pub fn build_host_fabric_member_contribution_for_spec(
         fabric_ref: spec.fabric_ref.clone(),
         host_ref: spec.host_ref.clone().unwrap_or_default(),
         member_ref,
+        participant_ref: spec.manager_ref.clone(),
         role: fabric_role_for_spec(spec).to_string(),
+        role_ref: fabric_role_ref_for_spec(spec),
         state: state.to_string(),
         contract_ref: spec.host_adapter_ref.clone(),
         subject_ref: spec.subject_ref.clone(),
+        module_refs: host_fabric_module_refs(spec),
+        source_refs: source_input_refs(spec),
         capability_refs: vec![constitute_protocol::CAPABILITY_SERVICE_MANAGE.to_string()],
         grant_refs: spec.grant_refs.clone(),
         input_refs: lifecycle_input_refs(spec, operation),
