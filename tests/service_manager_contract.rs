@@ -262,6 +262,17 @@ fn service_manager_reports_mitigation_recommendation_consumer_posture() {
         .expect("unsupported posture");
     assert_eq!(posture.state, "unsupported");
     assert_eq!(posture.blocked_reasons, vec!["unsupportedAction:block"]);
+
+    let mut expired = unsupported;
+    expired.action_kind = "retainEvidence".to_string();
+    let posture =
+        constitute_service_manager::mitigation::service_manager_mitigation_consumer_posture(
+            &expired,
+            vec!["authority:service-manager-mitigation".to_string()],
+            DEFAULT_NOW + 700,
+        )
+        .expect("expired posture");
+    assert_eq!(posture.state, "expired");
 }
 
 #[test]
