@@ -11,8 +11,11 @@ use constitute_protocol::{
     FABRIC_CONTRACT_TARGET_REGISTRY_READY, FABRIC_CONTRACT_TARGET_SELECTED,
     FABRIC_CONTRACT_TARGET_SLOT_AVAILABLE, FABRIC_CONTRACT_TARGET_SLOT_BLOCKED,
     FABRIC_CONTRACT_TARGET_SLOT_DEGRADED, FABRIC_CONTRACT_TARGET_SLOT_MISSING,
-    FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED, FABRIC_FULFILLMENT_PLAN_BLOCKED,
-    FABRIC_FULFILLMENT_PLAN_DEGRADED, FABRIC_FULFILLMENT_PLAN_READY,
+    FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED, FABRIC_CONTROL_DECISION_BLOCKED,
+    FABRIC_CONTROL_DECISION_DEGRADED, FABRIC_CONTROL_DECISION_NOT_REQUESTED,
+    FABRIC_CONTROL_DECISION_READY, FABRIC_CONTROL_DECISION_WAITING_PLAN,
+    FABRIC_FULFILLMENT_PLAN_BLOCKED, FABRIC_FULFILLMENT_PLAN_DEGRADED,
+    FABRIC_FULFILLMENT_PLAN_READY,
     FABRIC_LIFECYCLE_PHASE_BLOCKED, FABRIC_LIFECYCLE_PHASE_BUILD, FABRIC_LIFECYCLE_PHASE_CLEANUP,
     FABRIC_LIFECYCLE_PHASE_LOAD, FABRIC_LIFECYCLE_PHASE_NOT_REQUIRED,
     FABRIC_LIFECYCLE_PHASE_OBSERVE, FABRIC_LIFECYCLE_PHASE_READY, FABRIC_LIFECYCLE_PHASE_RELEASE,
@@ -21,12 +24,14 @@ use constitute_protocol::{
     FABRIC_LIFECYCLE_PLAN_READY, FABRIC_MEMBER_CONTRIBUTION_BLOCKED,
     FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_DOMAIN_SERVICE,
     FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION, FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
-    FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR, HostFabricFulfillmentPlan, HostFabricMemberContribution,
-    LifecyclePhasePosture, LifecyclePlanPosture, RECORD_CONTRACT_TARGET,
+    FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR, HostFabricControlDecision,
+    HostFabricFulfillmentPlan, HostFabricMemberContribution, LifecyclePhasePosture,
+    LifecyclePlanPosture, RECORD_CONTRACT_TARGET,
     RECORD_CONTRACT_TARGET_REGISTRY_POSTURE, RECORD_CYBERSEC_MITIGATION_RECOMMENDATION,
-    RECORD_HOST_FABRIC_FULFILLMENT_PLAN, RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION,
-    RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE, RECORD_SERVICE_HARDENING_POSTURE,
-    RECORD_SERVICE_MANAGER_LAB_PROOF, RECORD_SERVICE_MANAGER_OPERATION_POSTURE,
+    RECORD_HOST_FABRIC_CONTROL_DECISION, RECORD_HOST_FABRIC_FULFILLMENT_PLAN,
+    RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION, RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE,
+    RECORD_SERVICE_HARDENING_POSTURE, RECORD_SERVICE_MANAGER_LAB_PROOF,
+    RECORD_SERVICE_MANAGER_OPERATION_POSTURE,
     RECORD_SERVICE_MANAGER_POSTURE, RECORD_SERVICE_MANAGER_PROOF_DIGEST,
     RECORD_SERVICE_MANAGER_RELEASE_CONTRACT, RECORD_SERVICE_MANAGER_SECRET_BOUNDARY,
     RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture, SERVICE_MANAGER_OPERATION_HEALTH_CHECK,
@@ -44,8 +49,9 @@ use constitute_protocol::{
     ServiceManagerProofDigestRecord, ServiceManagerReleaseContractRecord,
     ServiceManagerSecretBoundaryRecord, ServiceManagerTrainDigestRecord, validate_contract_target,
     validate_contract_target_registry_posture, validate_cybersec_mitigation_consumer_posture,
-    validate_cybersec_mitigation_recommendation, validate_host_fabric_fulfillment_plan,
-    validate_host_fabric_member_contribution, validate_lifecycle_plan_posture,
+    validate_cybersec_mitigation_recommendation, validate_host_fabric_control_decision,
+    validate_host_fabric_fulfillment_plan, validate_host_fabric_member_contribution,
+    validate_lifecycle_plan_posture,
     validate_service_hardening_posture, validate_service_manager_lab_proof,
     validate_service_manager_operation_posture, validate_service_manager_posture,
     validate_service_manager_proof_digest, validate_service_manager_release_contract,
@@ -249,22 +255,8 @@ pub struct ServiceOperationOutcome {
     pub lifecycle_plan: LifecyclePlanPosture,
     pub host_fabric_fulfillment_plan: HostFabricFulfillmentPlan,
     pub service_hardening_posture: ServiceHardeningPostureRecord,
-    pub fabric_control_decision: FabricControlDecision,
+    pub fabric_control_decision: HostFabricControlDecision,
     pub posture: ServiceManagerPostureRecord,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct FabricControlDecision {
-    pub role_ref: Option<String>,
-    pub state: String,
-    pub source_plan_ref: Option<String>,
-    pub plan_state: Option<String>,
-    #[serde(default)]
-    pub blocked_reasons: Vec<String>,
-    #[serde(default)]
-    pub evidence_refs: Vec<String>,
-    pub observed_at: u64,
 }
 
 fn default_fabric_ref() -> String {
@@ -2858,20 +2850,64 @@ fn reduce_fabric_control_decision(
     state: &ServiceManagerState,
     spec: &ManagedServiceSpec,
     request: &ServiceOperationRequest,
-) -> Result<FabricControlDecision> {
-    let Some(role) = request.fabric_control_role.as_deref() else {
-        return Ok(FabricControlDecision {
-            role_ref: None,
-            state: "notRequested".to_string(),
-            source_plan_ref: None,
-            plan_state: None,
-            blocked_reasons: vec![],
-            evidence_refs: vec!["evidence:fabric-control:not-requested".to_string()],
+) -> Result<HostFabricControlDecision> {
+    let host_ref = spec.host_ref.as_deref().unwrap_or_default();
+    let operation_ref = format!(
+        "service-manager:operation:{}:{}:{}",
+        request.service_id, request.operation, request.requested_at
+    );
+    let base_decision = |state: &str,
+                         delegated_role_ref: Option<String>,
+                         source_plan_ref: Option<String>,
+                         plan_state: Option<String>,
+                         blocked_reasons: Vec<String>,
+                         evidence_refs: Vec<String>|
+     -> HostFabricControlDecision {
+        HostFabricControlDecision {
+            kind: Some(RECORD_HOST_FABRIC_CONTROL_DECISION.to_string()),
+            decision_id: format!(
+                "hostFabric:controlDecision:{}:{}:{}",
+                request.service_id, request.operation, request.requested_at
+            ),
+            fabric_ref: spec.fabric_ref.clone(),
+            host_ref: host_ref.to_string(),
+            operation_ref: operation_ref.clone(),
+            subject_ref: request.service_id.clone(),
+            control_owner_ref: spec.fabric_ref.clone(),
+            delegated_role_ref,
+            state: state.to_string(),
+            source_plan_ref,
+            plan_state,
+            execution_delegation_ref: Some(format!(
+                "delegation:service-manager:{}:{}",
+                request.service_id, request.operation
+            )),
+            fallback_refs: vec!["fallback:service-manager:legacy-control".to_string()],
+            quarantine_refs: vec![],
+            rollback_ref: Some(format!("rollback:service-manager:{}", request.service_id)),
+            blocked_reasons,
+            evidence_refs,
+            safe_facts: json!({
+                "operation": request.operation,
+                "dryRun": request.dry_run,
+            }),
             observed_at: request.requested_at,
-        });
+            expires_at: Some(request.requested_at + 300),
+        }
+    };
+    let Some(role) = request.fabric_control_role.as_deref() else {
+        let decision = base_decision(
+            FABRIC_CONTROL_DECISION_NOT_REQUESTED,
+            None,
+            None,
+            None,
+            vec![],
+            vec!["evidence:fabric-control:not-requested".to_string()],
+        );
+        validate_host_fabric_control_decision(&decision)?;
+        return Ok(decision);
     };
     let role_ref = fabric_role_ref(role);
-    let host_ref = spec.host_ref.as_deref().unwrap_or_default();
     let latest_plan = state
         .host_fabric_fulfillment_plans
         .iter()
@@ -2883,15 +2919,16 @@ fn reduce_fabric_control_decision(
         });
     let Some(plan) = latest_plan else {
         let blocked = vec![format!("hostFabric:controlPlanMissing:{role_ref}")];
-        return Ok(FabricControlDecision {
-            role_ref: Some(role_ref),
-            state: "blocked".to_string(),
-            source_plan_ref: None,
-            plan_state: None,
-            blocked_reasons: blocked,
-            evidence_refs: vec!["evidence:fabric-control:missing-plan".to_string()],
-            observed_at: request.requested_at,
-        });
+        let decision = base_decision(
+            FABRIC_CONTROL_DECISION_WAITING_PLAN,
+            Some(role_ref),
+            None,
+            None,
+            blocked,
+            vec!["evidence:fabric-control:missing-plan".to_string()],
+        );
+        validate_host_fabric_control_decision(&decision)?;
+        return Ok(decision);
     };
     validate_host_fabric_fulfillment_plan(plan)?;
     let mut blocked_reasons = Vec::new();
@@ -2920,25 +2957,26 @@ fn reduce_fabric_control_decision(
     blocked_reasons.sort();
     blocked_reasons.dedup();
     let state = if blocked_reasons.is_empty() {
-        "ready"
+        FABRIC_CONTROL_DECISION_READY
     } else if plan.state == FABRIC_FULFILLMENT_PLAN_DEGRADED {
-        "degraded"
+        FABRIC_CONTROL_DECISION_DEGRADED
     } else {
-        "blocked"
+        FABRIC_CONTROL_DECISION_BLOCKED
     };
     let mut evidence_refs = plan.evidence_refs.clone();
     evidence_refs.push(format!("evidence:fabric-control:{}", plan.plan_id));
     evidence_refs.sort();
     evidence_refs.dedup();
-    Ok(FabricControlDecision {
-        role_ref: Some(role_ref),
-        state: state.to_string(),
-        source_plan_ref: Some(plan.plan_id.clone()),
-        plan_state: Some(plan.state.clone()),
+    let decision = base_decision(
+        state,
+        Some(role_ref),
+        Some(plan.plan_id.clone()),
+        Some(plan.state.clone()),
         blocked_reasons,
         evidence_refs,
-        observed_at: request.requested_at,
-    })
+    );
+    validate_host_fabric_control_decision(&decision)?;
+    Ok(decision)
 }
 
 fn fabric_role_ref(role: &str) -> String {

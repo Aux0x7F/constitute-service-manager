@@ -776,10 +776,17 @@ fn fabric_control_role_blocks_without_existing_fulfillment_plan() {
     .expect("apply fabric-controlled operation");
 
     assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_BLOCKED);
-    assert_eq!(outcome.fabric_control_decision.state, "blocked");
+    assert_eq!(outcome.fabric_control_decision.state, "waitingPlan");
     assert_eq!(
-        outcome.fabric_control_decision.role_ref.as_deref(),
+        outcome
+            .fabric_control_decision
+            .delegated_role_ref
+            .as_deref(),
         Some("role:hostServiceAdapter")
+    );
+    assert_eq!(
+        outcome.fabric_control_decision.kind.as_deref(),
+        Some("hostFabric.control.decision")
     );
     assert!(
         outcome
@@ -822,6 +829,13 @@ fn fabric_control_role_allows_operation_when_latest_plan_is_ready() {
     );
     assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED);
     assert_eq!(outcome.fabric_control_decision.state, "ready");
+    assert_eq!(
+        outcome
+            .fabric_control_decision
+            .delegated_role_ref
+            .as_deref(),
+        Some("role:hostServiceAdapter")
+    );
     assert_eq!(
         outcome.fabric_control_decision.source_plan_ref.as_deref(),
         Some(warmup.host_fabric_fulfillment_plan.plan_id.as_str())
