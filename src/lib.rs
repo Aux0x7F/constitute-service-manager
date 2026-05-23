@@ -1,11 +1,13 @@
 use anyhow::{Result, anyhow};
 use constitute_fabric::{
-    HostFabricReduction, HostFabricReductionInput, HostFabricRoleRequirement,
-    HostFabricShadowParity, HostFabricShadowParityInput, reduce_host_fabric,
+    CarrierEdgeCandidate, CarrierEdgeSelectionInput, HostFabricReduction, HostFabricReductionInput,
+    HostFabricRoleRequirement, HostFabricShadowParity, HostFabricShadowParityInput,
+    reduce_carrier_edge_selection_from_fabric, reduce_host_fabric,
     reduce_host_fabric_shadow_parity,
 };
 use constitute_protocol::{
-    ContractTarget, ContractTargetRegistryPosture, ContractTargetSlotPosture,
+    CARRIER_EDGE_ADAPTER_WEB_SOCKET, CarrierEdgeRequirement, CarrierEdgeSelection, ContractTarget,
+    ContractTargetRegistryPosture, ContractTargetSlotPosture,
     CybersecMitigationConsumerPostureRecord, CybersecMitigationRecommendationRecord,
     FABRIC_ADAPTER_EXECUTION_BLOCKED, FABRIC_ADAPTER_EXECUTION_DEGRADED,
     FABRIC_ADAPTER_EXECUTION_SKIPPED, FABRIC_ADAPTER_EXECUTION_SUCCEEDED,
@@ -60,7 +62,8 @@ use constitute_protocol::{
     SURFACE_SECRET_BOUNDARY_RESOLVED, ServiceHardeningPostureRecord, ServiceManagerLabProofRecord,
     ServiceManagerOperationPostureRecord, ServiceManagerPostureRecord,
     ServiceManagerProofDigestRecord, ServiceManagerReleaseContractRecord,
-    ServiceManagerSecretBoundaryRecord, ServiceManagerTrainDigestRecord, validate_contract_target,
+    ServiceManagerSecretBoundaryRecord, ServiceManagerTrainDigestRecord,
+    validate_carrier_edge_requirement, validate_carrier_edge_selection, validate_contract_target,
     validate_contract_target_registry_posture, validate_cybersec_mitigation_consumer_posture,
     validate_cybersec_mitigation_recommendation, validate_host_fabric_adapter_execution_evidence,
     validate_host_fabric_control_decision, validate_host_fabric_fulfillment_plan,
@@ -133,6 +136,10 @@ pub struct FabricTransitionFixture {
     pub aggregate_fulfillment_plan: HostFabricFulfillmentPlan,
     pub aggregate_topology_projection: HostFabricTopologyProjection,
     pub adapter_execution_evidence: Vec<HostFabricAdapterExecutionEvidence>,
+    #[serde(default)]
+    pub carrier_edge_requirements: Vec<CarrierEdgeRequirement>,
+    #[serde(default)]
+    pub carrier_edge_selections: Vec<CarrierEdgeSelection>,
     pub shadow_parity: HostFabricShadowParity,
     pub transition_state: String,
     #[serde(default)]
@@ -3952,6 +3959,11 @@ pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixtu
             )
         })
         .collect::<Result<Vec<_>>>()?;
+    let carrier_edge_reductions = reduce_fabric_transition_carrier_edges(
+        &services,
+        &state.host_fabric_contributions,
+        issued_at + 2_200,
+    )?;
     let fixture = FabricTransitionFixture {
         family_ref: "branch-family:0x/fabric-transition".to_string(),
         fabric_ref,
@@ -3962,12 +3974,103 @@ pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixtu
         aggregate_fulfillment_plan,
         aggregate_topology_projection,
         adapter_execution_evidence: state.host_fabric_adapter_execution_evidence.clone(),
+        carrier_edge_requirements: carrier_edge_reductions
+            .iter()
+            .map(|reduction| reduction.requirement.clone())
+            .collect(),
+        carrier_edge_selections: carrier_edge_reductions
+            .into_iter()
+            .map(|reduction| reduction.selection)
+            .collect(),
         shadow_parity,
         outcomes,
         service_hardening_observations,
     };
     validate_fabric_transition_fixture(&fixture)?;
     Ok(fixture)
+}
+
+fn reduce_fabric_transition_carrier_edges(
+    services: &[ManagedServiceSpec],
+    contributions: &[HostFabricMemberContribution],
+    observed_at: u64,
+) -> Result<Vec<constitute_fabric::CarrierEdgeSelectionReduction>> {
+    let gateway_candidates = carrier_candidates_from_gateway_contributions(contributions);
+    services
+        .iter()
+        .filter(|service| service.fabric_role != FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION)
+        .enumerate()
+        .map(|(index, service)| {
+            reduce_carrier_edge_selection_from_fabric(CarrierEdgeSelectionInput {
+                requirement_id: format!("carrier-req:{}:gateway-edge", service.service_id),
+                selection_id: format!("carrier-select:{}:gateway-edge", service.service_id),
+                subject_ref: service.subject_ref.clone(),
+                fabric_ref: service.fabric_ref.clone(),
+                host_ref: service
+                    .host_ref
+                    .clone()
+                    .unwrap_or_else(|| "host:lab-service-manager".to_string()),
+                source_ref: Some(service.subject_ref.clone()),
+                consumer_ref: Some("gateway-association:lab".to_string()),
+                route_association_ref: Some(
+                    service
+                        .association_handoff_ref
+                        .clone()
+                        .unwrap_or_else(|| DEFAULT_ASSOCIATION_HANDOFF_REF.to_string()),
+                ),
+                policy_ref: Some("policy:carrier-edge:fabric-transition".to_string()),
+                required_capability_refs: vec!["swarm.edge.attach".to_string()],
+                candidates: gateway_candidates.clone(),
+                evidence_refs: vec![
+                    "evidence:fabric-transition:carrier-edge".to_string(),
+                    format!(
+                        "evidence:service-manager:carrier-edge:{}",
+                        service.service_id
+                    ),
+                ],
+                observed_at: observed_at + (index as u64),
+                expires_at: Some(observed_at + 3_600),
+            })
+        })
+        .collect()
+}
+
+fn carrier_candidates_from_gateway_contributions(
+    contributions: &[HostFabricMemberContribution],
+) -> Vec<CarrierEdgeCandidate> {
+    contributions
+        .iter()
+        .filter(|contribution| contribution.role == FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION)
+        .flat_map(|contribution| {
+            let adapter_refs = if contribution.output_refs.is_empty() {
+                vec![format!(
+                    "adapter:gateway-association:{}",
+                    contribution.contribution_id
+                )]
+            } else {
+                contribution
+                    .output_refs
+                    .iter()
+                    .map(|output| format!("adapter:gateway-association:{output}"))
+                    .collect()
+            };
+            adapter_refs
+                .into_iter()
+                .map(|adapter_ref| CarrierEdgeCandidate {
+                    adapter_ref,
+                    adapter_kind: CARRIER_EDGE_ADAPTER_WEB_SOCKET.to_string(),
+                    contribution_ref: Some(contribution.contribution_id.clone()),
+                    evidence_refs: contribution.evidence_refs.clone(),
+                    blocked_reasons: contribution.blocked_reasons.clone(),
+                    state: if contribution.state == FABRIC_MEMBER_CONTRIBUTION_RUNNING {
+                        "actionable".to_string()
+                    } else {
+                        "degraded".to_string()
+                    },
+                    priority: 10,
+                })
+        })
+        .collect()
 }
 
 pub fn blocked_operation_fixture(
@@ -4164,6 +4267,12 @@ pub fn validate_fabric_transition_fixture(fixture: &FabricTransitionFixture) -> 
     }
     for execution_evidence in &fixture.adapter_execution_evidence {
         validate_host_fabric_adapter_execution_evidence(execution_evidence)?;
+    }
+    for requirement in &fixture.carrier_edge_requirements {
+        validate_carrier_edge_requirement(requirement)?;
+    }
+    for selection in &fixture.carrier_edge_selections {
+        validate_carrier_edge_selection(selection)?;
     }
     for observation in &fixture.service_hardening_observations {
         validate_service_hardening_posture(&observation.service_hardening_posture)?;

@@ -726,6 +726,21 @@ fn cli_emits_valid_fabric_transition_fixture() {
         fixture.aggregate_topology_projection.role_postures.len(),
         fixture.services.len()
     );
+    assert_eq!(
+        fixture.carrier_edge_requirements.len(),
+        fixture.services.len() - 1
+    );
+    assert_eq!(
+        fixture.carrier_edge_selections.len(),
+        fixture.services.len() - 1
+    );
+    assert!(
+        fixture
+            .carrier_edge_selections
+            .iter()
+            .all(|selection| selection.state
+                == constitute_protocol::CARRIER_EDGE_SELECTION_ACTIONABLE)
+    );
     validate_fabric_transition_fixture(&fixture).expect("fixture validates");
 }
 
