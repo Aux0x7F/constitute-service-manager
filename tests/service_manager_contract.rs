@@ -1068,10 +1068,15 @@ fn cybersec_processor_spec_threads_processor_refs_through_lifecycle_fabric() {
     )
     .expect("cybersec contribution")
     .expect("cybersec contribution present");
-    let lifecycle = constitute_service_manager::build_lifecycle_plan_for_spec(
+    let lifecycle = constitute_service_manager::build_lifecycle_plan_for_spec_with_roles(
         &spec,
         &operation,
         vec![contribution.contribution_id.clone()],
+        vec![
+            role_ref(FABRIC_MEMBER_ROLE_DOMAIN_SERVICE),
+            role_ref(constitute_protocol::FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR),
+            role_ref(constitute_protocol::FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE),
+        ],
         DEFAULT_NOW + 48,
         vec![],
     )
@@ -1138,10 +1143,14 @@ fn cybersec_processor_spec_threads_processor_refs_through_lifecycle_fabric() {
     );
     assert!(lifecycle.phase_postures.iter().any(|phase| {
         phase.phase == constitute_protocol::FABRIC_LIFECYCLE_PHASE_RUN
+            && phase.dependency_refs.contains(
+                &"lifecycle-dependency:constitute-cybersec:role:loggingProcessor".to_string(),
+            )
             && phase
                 .output_refs
                 .contains(&"event-fabric-report:logging.cybersec.bootstrap".to_string())
     }));
+    assert_eq!(lifecycle.dependency_edges.len(), 2);
     assert!(registry.slot_postures.iter().any(|slot| {
         slot.slot_ref == "slot:processor-report"
             && slot.selected_fulfillment_ref.as_deref()
@@ -1203,6 +1212,21 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
     );
     assert_eq!(fixture.shadow_parity.agreement_role_refs.len(), 8);
     assert_eq!(fixture.aggregate_topology_projection.role_postures.len(), 8);
+    assert!(
+        fixture
+            .shadow_parity
+            .reduction
+            .dependency_edge_refs
+            .iter()
+            .any(|reference| reference
+                == "lifecycle-dependency:constitute-cybersec:role:loggingProcessor")
+    );
+    assert!(fixture.outcomes.iter().any(|outcome| {
+        outcome.lifecycle_plan.dependency_edges.iter().any(|edge| {
+            edge.source_ref == role_ref(FABRIC_MEMBER_ROLE_SURFACE)
+                && edge.target_ref == role_ref(FABRIC_MEMBER_ROLE_RUNTIME)
+        })
+    }));
     assert_eq!(
         fixture
             .shadow_parity
