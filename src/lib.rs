@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use constitute_fabric::{HostFabricReductionInput, HostFabricRoleRequirement, reduce_host_fabric};
 use constitute_protocol::{
     ContractTarget, ContractTargetRegistryPosture, ContractTargetSlotPosture,
+    CybersecMitigationConsumerPostureRecord, CybersecMitigationRecommendationRecord,
     FABRIC_CONTRACT_TARGET_BLOCKED, FABRIC_CONTRACT_TARGET_COMPATIBILITY_DEGRADED,
     FABRIC_CONTRACT_TARGET_COMPATIBLE, FABRIC_CONTRACT_TARGET_INCOMPATIBLE,
     FABRIC_CONTRACT_TARGET_PLATFORM_FIT_COMPATIBLE, FABRIC_CONTRACT_TARGET_PLATFORM_FIT_DEGRADED,
@@ -22,27 +23,28 @@ use constitute_protocol::{
     FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION, FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
     FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR, HostFabricFulfillmentPlan, HostFabricMemberContribution,
     LifecyclePhasePosture, LifecyclePlanPosture, RECORD_CONTRACT_TARGET,
-    RECORD_CONTRACT_TARGET_REGISTRY_POSTURE, RECORD_HOST_FABRIC_FULFILLMENT_PLAN,
-    RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION, RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE,
-    RECORD_SERVICE_HARDENING_POSTURE, RECORD_SERVICE_MANAGER_LAB_PROOF,
-    RECORD_SERVICE_MANAGER_OPERATION_POSTURE, RECORD_SERVICE_MANAGER_POSTURE,
-    RECORD_SERVICE_MANAGER_PROOF_DIGEST, RECORD_SERVICE_MANAGER_RELEASE_CONTRACT,
-    RECORD_SERVICE_MANAGER_SECRET_BOUNDARY, RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture,
-    SERVICE_MANAGER_OPERATION_HEALTH_CHECK, SERVICE_MANAGER_OPERATION_INSTALL,
-    SERVICE_MANAGER_OPERATION_PROMOTE, SERVICE_MANAGER_OPERATION_RELEASE,
-    SERVICE_MANAGER_OPERATION_RESTART, SERVICE_MANAGER_OPERATION_ROLLBACK,
-    SERVICE_MANAGER_OPERATION_SECRET_READY, SERVICE_MANAGER_OPERATION_START,
-    SERVICE_MANAGER_OPERATION_STATE_BLOCKED, SERVICE_MANAGER_OPERATION_STATE_FAILED,
-    SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED, SERVICE_MANAGER_OPERATION_STOP,
-    SERVICE_MANAGER_OPERATION_UPDATE, SERVICE_MANAGER_POSTURE_BLOCKED,
-    SERVICE_MANAGER_POSTURE_READY, SERVICE_MANAGER_PROOF_STATE_BLOCKED,
-    SERVICE_MANAGER_PROOF_STATE_FAILED, SERVICE_MANAGER_PROOF_STATE_PROVED,
-    SURFACE_APP_CONTRACT_STATE_READY, SURFACE_SECRET_BOUNDARY_RESOLVED,
-    ServiceHardeningPostureRecord, ServiceManagerLabProofRecord,
+    RECORD_CONTRACT_TARGET_REGISTRY_POSTURE, RECORD_CYBERSEC_MITIGATION_RECOMMENDATION,
+    RECORD_HOST_FABRIC_FULFILLMENT_PLAN, RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION,
+    RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE, RECORD_SERVICE_HARDENING_POSTURE,
+    RECORD_SERVICE_MANAGER_LAB_PROOF, RECORD_SERVICE_MANAGER_OPERATION_POSTURE,
+    RECORD_SERVICE_MANAGER_POSTURE, RECORD_SERVICE_MANAGER_PROOF_DIGEST,
+    RECORD_SERVICE_MANAGER_RELEASE_CONTRACT, RECORD_SERVICE_MANAGER_SECRET_BOUNDARY,
+    RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture, SERVICE_MANAGER_OPERATION_HEALTH_CHECK,
+    SERVICE_MANAGER_OPERATION_INSTALL, SERVICE_MANAGER_OPERATION_PROMOTE,
+    SERVICE_MANAGER_OPERATION_RELEASE, SERVICE_MANAGER_OPERATION_RESTART,
+    SERVICE_MANAGER_OPERATION_ROLLBACK, SERVICE_MANAGER_OPERATION_SECRET_READY,
+    SERVICE_MANAGER_OPERATION_START, SERVICE_MANAGER_OPERATION_STATE_BLOCKED,
+    SERVICE_MANAGER_OPERATION_STATE_FAILED, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
+    SERVICE_MANAGER_OPERATION_STOP, SERVICE_MANAGER_OPERATION_UPDATE,
+    SERVICE_MANAGER_POSTURE_BLOCKED, SERVICE_MANAGER_POSTURE_READY,
+    SERVICE_MANAGER_PROOF_STATE_BLOCKED, SERVICE_MANAGER_PROOF_STATE_FAILED,
+    SERVICE_MANAGER_PROOF_STATE_PROVED, SURFACE_APP_CONTRACT_STATE_READY,
+    SURFACE_SECRET_BOUNDARY_RESOLVED, ServiceHardeningPostureRecord, ServiceManagerLabProofRecord,
     ServiceManagerOperationPostureRecord, ServiceManagerPostureRecord,
     ServiceManagerProofDigestRecord, ServiceManagerReleaseContractRecord,
     ServiceManagerSecretBoundaryRecord, ServiceManagerTrainDigestRecord, validate_contract_target,
-    validate_contract_target_registry_posture, validate_host_fabric_fulfillment_plan,
+    validate_contract_target_registry_posture, validate_cybersec_mitigation_consumer_posture,
+    validate_cybersec_mitigation_recommendation, validate_host_fabric_fulfillment_plan,
     validate_host_fabric_member_contribution, validate_lifecycle_plan_posture,
     validate_service_hardening_posture, validate_service_manager_lab_proof,
     validate_service_manager_operation_posture, validate_service_manager_posture,
@@ -105,10 +107,20 @@ pub struct FabricTransitionFixture {
     pub host_ref: String,
     pub services: Vec<ManagedServiceSpec>,
     pub outcomes: Vec<ServiceOperationOutcome>,
+    pub service_hardening_observations: Vec<ServiceManagerHardeningObservation>,
     pub aggregate_fulfillment_plan: HostFabricFulfillmentPlan,
     pub transition_state: String,
     #[serde(default)]
     pub blocked_reasons: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceManagerHardeningObservation {
+    pub service_id: String,
+    pub service_hardening_posture: ServiceHardeningPostureRecord,
+    pub mitigation_recommendation: CybersecMitigationRecommendationRecord,
+    pub mitigation_consumer: CybersecMitigationConsumerPostureRecord,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -2073,6 +2085,64 @@ pub fn build_service_hardening_posture_for_spec(
     Ok(posture)
 }
 
+pub fn build_service_manager_hardening_observation(
+    outcome: &ServiceOperationOutcome,
+    observed_at: u64,
+) -> Result<ServiceManagerHardeningObservation> {
+    validate_service_hardening_posture(&outcome.service_hardening_posture)?;
+    validate_service_manager_operation_posture(&outcome.operation_posture)?;
+    validate_service_manager_proof_digest(&outcome.proof_digest)?;
+    let expires_at = observed_at.saturating_add(3_600);
+    let mitigation_recommendation = CybersecMitigationRecommendationRecord {
+        kind: Some(RECORD_CYBERSEC_MITIGATION_RECOMMENDATION.to_string()),
+        recommendation_id: format!(
+            "cybersec:recommendation:service-hardening:{}:{}",
+            outcome.service_id, observed_at
+        ),
+        finding_ref: outcome.service_hardening_posture.posture_id.clone(),
+        processor_report_ref: format!(
+            "event-fabric-report:service-hardening:{}",
+            outcome.service_id
+        ),
+        recommender_ref: "processor:constitute-cybersec".to_string(),
+        action_kind: "retainEvidence".to_string(),
+        target_ref: outcome.service_hardening_posture.posture_id.clone(),
+        state: "recommended".to_string(),
+        authority_refs: vec!["authority:cybersec-recommendation".to_string()],
+        consumer_refs: vec![
+            mitigation::SERVICE_MANAGER_MITIGATION_CONSUMER_REF.to_string(),
+            "host.lifecycle".to_string(),
+        ],
+        evidence_refs: vec![
+            outcome.service_hardening_posture.posture_id.clone(),
+            outcome.operation_posture.operation_id.clone(),
+            outcome.proof_digest.digest_id.clone(),
+        ],
+        safe_facts: json!({
+            "recommendationOnly": true,
+            "targetClass": "serviceHardeningObservation",
+            "hostEffectGated": true
+        }),
+        blocked_reasons: Vec::new(),
+        issued_at: observed_at,
+        expires_at: Some(expires_at),
+    };
+    validate_cybersec_mitigation_recommendation(&mitigation_recommendation)?;
+    let mitigation_consumer = mitigation::service_manager_mitigation_consumer_posture(
+        &mitigation_recommendation,
+        vec!["authority:service-manager-mitigation".to_string()],
+        observed_at.saturating_add(1),
+    )?;
+    validate_cybersec_mitigation_consumer_posture(&mitigation_consumer)?;
+
+    Ok(ServiceManagerHardeningObservation {
+        service_id: outcome.service_id.clone(),
+        service_hardening_posture: outcome.service_hardening_posture.clone(),
+        mitigation_recommendation,
+        mitigation_consumer,
+    })
+}
+
 fn target_registry_blockers(registry: &ContractTargetRegistryPosture) -> Vec<String> {
     let mut blockers = registry.blocked_reasons.clone();
     for slot in &registry.slot_postures {
@@ -3210,6 +3280,16 @@ pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixtu
         expires_at: Some(issued_at + 5_600),
     })?;
     let aggregate_fulfillment_plan = reduction.fulfillment_plan;
+    let service_hardening_observations = outcomes
+        .iter()
+        .enumerate()
+        .map(|(index, outcome)| {
+            build_service_manager_hardening_observation(
+                outcome,
+                issued_at + 2_100 + (index as u64 * 10),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
     let fixture = FabricTransitionFixture {
         family_ref: "branch-family:0x/fabric-transition".to_string(),
         fabric_ref,
@@ -3219,6 +3299,7 @@ pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixtu
         blocked_reasons: aggregate_fulfillment_plan.blocked_reasons.clone(),
         aggregate_fulfillment_plan,
         outcomes,
+        service_hardening_observations,
     };
     validate_fabric_transition_fixture(&fixture)?;
     Ok(fixture)
@@ -3397,6 +3478,11 @@ pub fn validate_fabric_transition_fixture(fixture: &FabricTransitionFixture) -> 
         validate_host_fabric_fulfillment_plan(&outcome.host_fabric_fulfillment_plan)?;
         validate_service_hardening_posture(&outcome.service_hardening_posture)?;
         validate_service_manager_posture(&outcome.posture)?;
+    }
+    for observation in &fixture.service_hardening_observations {
+        validate_service_hardening_posture(&observation.service_hardening_posture)?;
+        validate_cybersec_mitigation_recommendation(&observation.mitigation_recommendation)?;
+        validate_cybersec_mitigation_consumer_posture(&observation.mitigation_consumer)?;
     }
     Ok(())
 }

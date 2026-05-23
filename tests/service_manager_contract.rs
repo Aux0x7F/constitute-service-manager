@@ -1114,6 +1114,7 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
     assert_eq!(fixture.family_ref, "branch-family:0x/fabric-transition");
     assert_eq!(fixture.services.len(), 4);
     assert_eq!(fixture.outcomes.len(), 4);
+    assert_eq!(fixture.service_hardening_observations.len(), 4);
     assert_eq!(fixture.transition_state, FABRIC_FULFILLMENT_PLAN_READY);
     assert!(fixture.blocked_reasons.is_empty());
 
@@ -1150,6 +1151,26 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
             .missing_role_refs
             .is_empty()
     );
+
+    for observation in &fixture.service_hardening_observations {
+        assert_eq!(
+            observation.mitigation_consumer.consumer_ref,
+            "constitute-service-manager"
+        );
+        assert_eq!(observation.mitigation_consumer.state, "actionable");
+        assert_eq!(
+            observation.mitigation_consumer.action_kind,
+            "retainEvidence"
+        );
+        assert_eq!(
+            observation.mitigation_recommendation.target_ref,
+            observation.service_hardening_posture.posture_id
+        );
+        assert_eq!(
+            observation.mitigation_consumer.safe_facts["hostEffectGated"],
+            true
+        );
+    }
 }
 
 #[test]
