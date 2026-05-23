@@ -1539,6 +1539,30 @@ fn cli_run_and_status_roundtrip_state_file() {
     let outcome: constitute_service_manager::ServiceOperationOutcome =
         serde_json::from_slice(&run.stdout).expect("outcome json");
     assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED);
+    assert_eq!(
+        outcome.host_fabric_legacy_control_bridge.state,
+        FABRIC_LEGACY_CONTROL_LEGACY_DIRECT
+    );
+    assert!(
+        outcome
+            .host_fabric_legacy_control_bridge
+            .source_decision_ref
+            .is_none()
+    );
+    assert!(
+        outcome
+            .host_fabric_legacy_control_bridge
+            .delegated_role_ref
+            .is_none()
+    );
+    validate_host_fabric_legacy_control_bridge(&outcome.host_fabric_legacy_control_bridge)
+        .expect("legacy direct bridge validates");
+    assert_eq!(
+        outcome
+            .host_fabric_adapter_execution_evidence
+            .state,
+        FABRIC_ADAPTER_EXECUTION_SKIPPED
+    );
 
     let controlled_run =
         std::process::Command::new(env!("CARGO_BIN_EXE_constitute-service-manager"))
