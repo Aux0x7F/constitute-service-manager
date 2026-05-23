@@ -4041,34 +4041,24 @@ fn carrier_candidates_from_gateway_contributions(
     contributions
         .iter()
         .filter(|contribution| contribution.role == FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION)
-        .flat_map(|contribution| {
-            let adapter_refs = if contribution.output_refs.is_empty() {
-                vec![format!(
-                    "adapter:gateway-association:{}",
-                    contribution.contribution_id
-                )]
-            } else {
-                contribution
-                    .output_refs
-                    .iter()
-                    .map(|output| format!("adapter:gateway-association:{output}"))
-                    .collect()
-            };
-            adapter_refs
-                .into_iter()
-                .map(|adapter_ref| CarrierEdgeCandidate {
-                    adapter_ref,
-                    adapter_kind: CARRIER_EDGE_ADAPTER_WEB_SOCKET.to_string(),
-                    contribution_ref: Some(contribution.contribution_id.clone()),
-                    evidence_refs: contribution.evidence_refs.clone(),
-                    blocked_reasons: contribution.blocked_reasons.clone(),
-                    state: if contribution.state == FABRIC_MEMBER_CONTRIBUTION_RUNNING {
-                        "actionable".to_string()
-                    } else {
-                        "degraded".to_string()
-                    },
-                    priority: 10,
-                })
+        .map(|contribution| {
+            let mut evidence_refs = contribution.evidence_refs.clone();
+            evidence_refs.extend(contribution.output_refs.clone());
+            evidence_refs.sort();
+            evidence_refs.dedup();
+            CarrierEdgeCandidate {
+                adapter_ref: "adapter:gateway-association:websocket".to_string(),
+                adapter_kind: CARRIER_EDGE_ADAPTER_WEB_SOCKET.to_string(),
+                contribution_ref: Some(contribution.contribution_id.clone()),
+                evidence_refs,
+                blocked_reasons: contribution.blocked_reasons.clone(),
+                state: if contribution.state == FABRIC_MEMBER_CONTRIBUTION_RUNNING {
+                    "actionable".to_string()
+                } else {
+                    "degraded".to_string()
+                },
+                priority: 10,
+            }
         })
         .collect()
 }

@@ -741,6 +741,9 @@ fn cli_emits_valid_fabric_transition_fixture() {
             .all(|selection| selection.state
                 == constitute_protocol::CARRIER_EDGE_SELECTION_ACTIONABLE)
     );
+    assert!(fixture.carrier_edge_selections.iter().all(|selection| {
+        selection.selected_adapter_ref.as_deref() == Some("adapter:gateway-association:websocket")
+    }));
     validate_fabric_transition_fixture(&fixture).expect("fixture validates");
 }
 
