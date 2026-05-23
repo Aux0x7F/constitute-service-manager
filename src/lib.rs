@@ -2278,6 +2278,21 @@ pub fn build_host_fabric_fulfillment_plan_for_spec_with_target(
     } else {
         spec.materialization_budget_refs.clone()
     };
+    let mut action_authority_refs = spec.authority_refs.clone();
+    action_authority_refs.extend(spec.grant_refs.clone());
+    action_authority_refs.sort();
+    action_authority_refs.dedup();
+    let delegated_role_refs = vec![required_role_ref.clone()];
+    let fallback_refs = vec!["fallback:service-manager:legacy-control".to_string()];
+    let quarantine_refs = vec![format!(
+        "quarantine:service-manager:legacy-control:{required_role_ref}"
+    )];
+    let rollback_refs = optional_ref(&spec.rollback_ref);
+    let evidence_requirement_refs = vec![
+        "proof-requirement:service-manager:lifecycle".to_string(),
+        format!("proof-requirement:service-manager:{}", operation.operation),
+        format!("proof-requirement:host-fabric:{required_role_ref}"),
+    ];
     let plan = HostFabricFulfillmentPlan {
         kind: Some(RECORD_HOST_FABRIC_FULFILLMENT_PLAN.to_string()),
         plan_id: host_fabric_fulfillment_plan_id(spec, operation),
@@ -2290,6 +2305,12 @@ pub fn build_host_fabric_fulfillment_plan_for_spec_with_target(
         missing_role_refs,
         lifecycle_plan_refs,
         materialization_budget_refs,
+        action_authority_refs,
+        delegated_role_refs,
+        fallback_refs,
+        quarantine_refs,
+        rollback_refs,
+        evidence_requirement_refs,
         association_handoff_ref: spec.association_handoff_ref.clone(),
         evidence_refs: vec![
             format!("evidence:host-fabric-plan:{}", spec.service_id),

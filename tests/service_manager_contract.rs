@@ -856,6 +856,47 @@ fn fabric_control_role_allows_operation_when_latest_plan_is_ready() {
         warmup.host_fabric_fulfillment_plan.state,
         FABRIC_FULFILLMENT_PLAN_READY
     );
+    assert_eq!(
+        warmup.host_fabric_fulfillment_plan.action_authority_refs,
+        vec![format!(
+            "authority:host-fabric:{}",
+            warmup.host_fabric_fulfillment_plan.contract_ref
+        )]
+    );
+    assert_eq!(
+        warmup.host_fabric_fulfillment_plan.delegated_role_refs,
+        vec![role_ref(FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER)]
+    );
+    assert_eq!(
+        warmup.host_fabric_fulfillment_plan.fallback_refs,
+        vec![format!(
+            "fallback:host-fabric:{}",
+            warmup.host_fabric_fulfillment_plan.plan_id
+        )]
+    );
+    assert_eq!(
+        warmup.host_fabric_fulfillment_plan.quarantine_refs,
+        vec![format!(
+            "quarantine:host-fabric:{}",
+            warmup.host_fabric_fulfillment_plan.plan_id
+        )]
+    );
+    assert_eq!(
+        warmup.host_fabric_fulfillment_plan.rollback_refs,
+        vec![format!(
+            "rollback:host-fabric:{}",
+            warmup.host_fabric_fulfillment_plan.plan_id
+        )]
+    );
+    assert!(
+        warmup
+            .host_fabric_fulfillment_plan
+            .evidence_requirement_refs
+            .contains(&format!(
+                "proof-requirement:host-fabric:{}",
+                role_ref(FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER)
+            ))
+    );
     assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED);
     assert_eq!(outcome.fabric_control_decision.state, "ready");
     assert_eq!(
@@ -1209,6 +1250,49 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
             .member_contribution_refs
             .len(),
         8
+    );
+    assert_eq!(
+        fixture.aggregate_fulfillment_plan.action_authority_refs,
+        vec![format!(
+            "authority:host-fabric:{}",
+            fixture.aggregate_fulfillment_plan.contract_ref
+        )]
+    );
+    assert!(
+        fixture
+            .aggregate_fulfillment_plan
+            .delegated_role_refs
+            .contains(&role_ref(FABRIC_MEMBER_ROLE_RUNTIME))
+    );
+    assert_eq!(
+        fixture.aggregate_fulfillment_plan.fallback_refs,
+        vec![format!(
+            "fallback:host-fabric:{}",
+            fixture.aggregate_fulfillment_plan.plan_id
+        )]
+    );
+    assert_eq!(
+        fixture.aggregate_fulfillment_plan.quarantine_refs,
+        vec![format!(
+            "quarantine:host-fabric:{}",
+            fixture.aggregate_fulfillment_plan.plan_id
+        )]
+    );
+    assert_eq!(
+        fixture.aggregate_fulfillment_plan.rollback_refs,
+        vec![format!(
+            "rollback:host-fabric:{}",
+            fixture.aggregate_fulfillment_plan.plan_id
+        )]
+    );
+    assert!(
+        fixture
+            .aggregate_fulfillment_plan
+            .evidence_requirement_refs
+            .contains(&format!(
+                "proof-requirement:host-fabric:{}",
+                role_ref(FABRIC_MEMBER_ROLE_BUILD_PROCESSOR)
+            ))
     );
     assert_eq!(fixture.shadow_parity.agreement_role_refs.len(), 8);
     assert_eq!(fixture.aggregate_topology_projection.role_postures.len(), 8);
