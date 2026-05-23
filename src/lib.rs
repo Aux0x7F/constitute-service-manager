@@ -7,6 +7,8 @@ use constitute_fabric::{
 use constitute_protocol::{
     ContractTarget, ContractTargetRegistryPosture, ContractTargetSlotPosture,
     CybersecMitigationConsumerPostureRecord, CybersecMitigationRecommendationRecord,
+    FABRIC_ADAPTER_EXECUTION_BLOCKED, FABRIC_ADAPTER_EXECUTION_DEGRADED,
+    FABRIC_ADAPTER_EXECUTION_SKIPPED, FABRIC_ADAPTER_EXECUTION_SUCCEEDED,
     FABRIC_CONTRACT_TARGET_BLOCKED, FABRIC_CONTRACT_TARGET_COMPATIBILITY_DEGRADED,
     FABRIC_CONTRACT_TARGET_COMPATIBLE, FABRIC_CONTRACT_TARGET_INCOMPATIBLE,
     FABRIC_CONTRACT_TARGET_PLATFORM_FIT_COMPATIBLE, FABRIC_CONTRACT_TARGET_PLATFORM_FIT_DEGRADED,
@@ -34,40 +36,40 @@ use constitute_protocol::{
     FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION, FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
     FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR, FABRIC_MEMBER_ROLE_RUNTIME,
     FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE, FABRIC_MEMBER_ROLE_SURFACE,
-    HostFabricControlDecision, HostFabricFulfillmentPlan, HostFabricLegacyControlBridge,
-    HostFabricMemberContribution, HostFabricTopologyProjection, LifecycleDependencyEdge,
-    LifecyclePhasePosture, LifecyclePlanPosture, RECORD_CONTRACT_TARGET,
+    HostFabricAdapterExecutionEvidence, HostFabricControlDecision, HostFabricFulfillmentPlan,
+    HostFabricLegacyControlBridge, HostFabricMemberContribution, HostFabricTopologyProjection,
+    LifecycleDependencyEdge, LifecyclePhasePosture, LifecyclePlanPosture, RECORD_CONTRACT_TARGET,
     RECORD_CONTRACT_TARGET_REGISTRY_POSTURE, RECORD_CYBERSEC_MITIGATION_RECOMMENDATION,
-    RECORD_HOST_FABRIC_CONTROL_DECISION, RECORD_HOST_FABRIC_FULFILLMENT_PLAN,
-    RECORD_HOST_FABRIC_LEGACY_CONTROL_BRIDGE, RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION,
-    RECORD_LIFECYCLE_DEPENDENCY_EDGE, RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE,
-    RECORD_SERVICE_HARDENING_POSTURE, RECORD_SERVICE_MANAGER_LAB_PROOF,
-    RECORD_SERVICE_MANAGER_OPERATION_POSTURE, RECORD_SERVICE_MANAGER_POSTURE,
-    RECORD_SERVICE_MANAGER_PROOF_DIGEST, RECORD_SERVICE_MANAGER_RELEASE_CONTRACT,
-    RECORD_SERVICE_MANAGER_SECRET_BOUNDARY, RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture,
-    SERVICE_MANAGER_OPERATION_HEALTH_CHECK, SERVICE_MANAGER_OPERATION_INSTALL,
-    SERVICE_MANAGER_OPERATION_PROMOTE, SERVICE_MANAGER_OPERATION_RELEASE,
-    SERVICE_MANAGER_OPERATION_RESTART, SERVICE_MANAGER_OPERATION_ROLLBACK,
-    SERVICE_MANAGER_OPERATION_SECRET_READY, SERVICE_MANAGER_OPERATION_START,
-    SERVICE_MANAGER_OPERATION_STATE_BLOCKED, SERVICE_MANAGER_OPERATION_STATE_FAILED,
-    SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED, SERVICE_MANAGER_OPERATION_STOP,
-    SERVICE_MANAGER_OPERATION_UPDATE, SERVICE_MANAGER_POSTURE_BLOCKED,
-    SERVICE_MANAGER_POSTURE_READY, SERVICE_MANAGER_PROOF_STATE_BLOCKED,
-    SERVICE_MANAGER_PROOF_STATE_FAILED, SERVICE_MANAGER_PROOF_STATE_PROVED,
-    SURFACE_APP_CONTRACT_STATE_READY, SURFACE_SECRET_BOUNDARY_RESOLVED,
-    ServiceHardeningPostureRecord, ServiceManagerLabProofRecord,
+    RECORD_HOST_FABRIC_ADAPTER_EXECUTION_EVIDENCE, RECORD_HOST_FABRIC_CONTROL_DECISION,
+    RECORD_HOST_FABRIC_FULFILLMENT_PLAN, RECORD_HOST_FABRIC_LEGACY_CONTROL_BRIDGE,
+    RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION, RECORD_LIFECYCLE_DEPENDENCY_EDGE,
+    RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE, RECORD_SERVICE_HARDENING_POSTURE,
+    RECORD_SERVICE_MANAGER_LAB_PROOF, RECORD_SERVICE_MANAGER_OPERATION_POSTURE,
+    RECORD_SERVICE_MANAGER_POSTURE, RECORD_SERVICE_MANAGER_PROOF_DIGEST,
+    RECORD_SERVICE_MANAGER_RELEASE_CONTRACT, RECORD_SERVICE_MANAGER_SECRET_BOUNDARY,
+    RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture, SERVICE_MANAGER_OPERATION_HEALTH_CHECK,
+    SERVICE_MANAGER_OPERATION_INSTALL, SERVICE_MANAGER_OPERATION_PROMOTE,
+    SERVICE_MANAGER_OPERATION_RELEASE, SERVICE_MANAGER_OPERATION_RESTART,
+    SERVICE_MANAGER_OPERATION_ROLLBACK, SERVICE_MANAGER_OPERATION_SECRET_READY,
+    SERVICE_MANAGER_OPERATION_START, SERVICE_MANAGER_OPERATION_STATE_BLOCKED,
+    SERVICE_MANAGER_OPERATION_STATE_FAILED, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
+    SERVICE_MANAGER_OPERATION_STOP, SERVICE_MANAGER_OPERATION_UPDATE,
+    SERVICE_MANAGER_POSTURE_BLOCKED, SERVICE_MANAGER_POSTURE_READY,
+    SERVICE_MANAGER_PROOF_STATE_BLOCKED, SERVICE_MANAGER_PROOF_STATE_FAILED,
+    SERVICE_MANAGER_PROOF_STATE_PROVED, SURFACE_APP_CONTRACT_STATE_READY,
+    SURFACE_SECRET_BOUNDARY_RESOLVED, ServiceHardeningPostureRecord, ServiceManagerLabProofRecord,
     ServiceManagerOperationPostureRecord, ServiceManagerPostureRecord,
     ServiceManagerProofDigestRecord, ServiceManagerReleaseContractRecord,
     ServiceManagerSecretBoundaryRecord, ServiceManagerTrainDigestRecord, validate_contract_target,
     validate_contract_target_registry_posture, validate_cybersec_mitigation_consumer_posture,
-    validate_cybersec_mitigation_recommendation, validate_host_fabric_control_decision,
-    validate_host_fabric_fulfillment_plan, validate_host_fabric_legacy_control_bridge,
-    validate_host_fabric_member_contribution, validate_host_fabric_topology_projection,
-    validate_lifecycle_plan_posture, validate_service_hardening_posture,
-    validate_service_manager_lab_proof, validate_service_manager_operation_posture,
-    validate_service_manager_posture, validate_service_manager_proof_digest,
-    validate_service_manager_release_contract, validate_service_manager_secret_boundary,
-    validate_service_manager_train_digest,
+    validate_cybersec_mitigation_recommendation, validate_host_fabric_adapter_execution_evidence,
+    validate_host_fabric_control_decision, validate_host_fabric_fulfillment_plan,
+    validate_host_fabric_legacy_control_bridge, validate_host_fabric_member_contribution,
+    validate_host_fabric_topology_projection, validate_lifecycle_plan_posture,
+    validate_service_hardening_posture, validate_service_manager_lab_proof,
+    validate_service_manager_operation_posture, validate_service_manager_posture,
+    validate_service_manager_proof_digest, validate_service_manager_release_contract,
+    validate_service_manager_secret_boundary, validate_service_manager_train_digest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -105,6 +107,7 @@ pub struct ServiceManagerLifecycleFixture {
     pub lifecycle_plans: Vec<LifecyclePlanPosture>,
     pub host_fabric_fulfillment_plans: Vec<HostFabricFulfillmentPlan>,
     pub host_fabric_topology_projections: Vec<HostFabricTopologyProjection>,
+    pub host_fabric_adapter_execution_evidence: Vec<HostFabricAdapterExecutionEvidence>,
     pub service_hardening_postures: Vec<ServiceHardeningPostureRecord>,
     pub posture: ServiceManagerPostureRecord,
 }
@@ -129,6 +132,7 @@ pub struct FabricTransitionFixture {
     pub service_hardening_observations: Vec<ServiceManagerHardeningObservation>,
     pub aggregate_fulfillment_plan: HostFabricFulfillmentPlan,
     pub aggregate_topology_projection: HostFabricTopologyProjection,
+    pub adapter_execution_evidence: Vec<HostFabricAdapterExecutionEvidence>,
     pub shadow_parity: HostFabricShadowParity,
     pub transition_state: String,
     #[serde(default)]
@@ -253,6 +257,8 @@ pub struct ServiceManagerState {
     #[serde(default)]
     pub host_fabric_legacy_control_bridges: Vec<HostFabricLegacyControlBridge>,
     #[serde(default)]
+    pub host_fabric_adapter_execution_evidence: Vec<HostFabricAdapterExecutionEvidence>,
+    #[serde(default)]
     pub service_hardening_postures: Vec<ServiceHardeningPostureRecord>,
     pub posture: Option<ServiceManagerPostureRecord>,
     pub updated_at: u64,
@@ -287,6 +293,7 @@ pub struct ServiceOperationOutcome {
     pub host_fabric_fulfillment_plan: HostFabricFulfillmentPlan,
     pub host_fabric_topology_projection: HostFabricTopologyProjection,
     pub host_fabric_legacy_control_bridge: HostFabricLegacyControlBridge,
+    pub host_fabric_adapter_execution_evidence: HostFabricAdapterExecutionEvidence,
     pub service_hardening_posture: ServiceHardeningPostureRecord,
     pub fabric_control_decision: HostFabricControlDecision,
     pub posture: ServiceManagerPostureRecord,
@@ -702,6 +709,7 @@ pub fn default_manager_state(issued_at: u64) -> ServiceManagerState {
         host_fabric_fulfillment_plans: vec![],
         host_fabric_topology_projections: vec![],
         host_fabric_legacy_control_bridges: vec![],
+        host_fabric_adapter_execution_evidence: vec![],
         service_hardening_postures: vec![],
         posture: None,
         updated_at: issued_at,
@@ -3125,6 +3133,25 @@ pub fn apply_service_operation(
     )?;
     let host_fabric_fulfillment_plan = host_fabric_reduction.fulfillment_plan.clone();
     let host_fabric_topology_projection = host_fabric_reduction.topology_projection.clone();
+    let execution_source_plan = fabric_control_decision
+        .source_plan_ref
+        .as_deref()
+        .and_then(|plan_ref| {
+            state
+                .host_fabric_fulfillment_plans
+                .iter()
+                .find(|plan| plan.plan_id == plan_ref)
+        })
+        .unwrap_or(&host_fabric_fulfillment_plan);
+    let host_fabric_adapter_execution_evidence = build_host_fabric_adapter_execution_evidence(
+        &spec,
+        &request,
+        &fabric_control_decision,
+        execution_source_plan,
+        &host_fabric_legacy_control_bridge,
+        request.requested_at + 112,
+        blocked_reasons.clone(),
+    )?;
     let service_hardening_posture = build_service_hardening_posture_for_spec(
         &spec,
         &operation_posture,
@@ -3152,6 +3179,9 @@ pub fn apply_service_operation(
         .host_fabric_legacy_control_bridges
         .push(host_fabric_legacy_control_bridge.clone());
     state
+        .host_fabric_adapter_execution_evidence
+        .push(host_fabric_adapter_execution_evidence.clone());
+    state
         .service_hardening_postures
         .push(service_hardening_posture.clone());
     state.updated_at = request.requested_at + 115;
@@ -3173,6 +3203,7 @@ pub fn apply_service_operation(
         host_fabric_fulfillment_plan,
         host_fabric_topology_projection,
         host_fabric_legacy_control_bridge,
+        host_fabric_adapter_execution_evidence,
         service_hardening_posture,
         fabric_control_decision,
         posture,
@@ -3469,6 +3500,93 @@ fn build_host_fabric_legacy_control_bridge(
     Ok(bridge)
 }
 
+fn build_host_fabric_adapter_execution_evidence(
+    spec: &ManagedServiceSpec,
+    request: &ServiceOperationRequest,
+    decision: &HostFabricControlDecision,
+    plan: &HostFabricFulfillmentPlan,
+    bridge: &HostFabricLegacyControlBridge,
+    observed_at: u64,
+    blocked_reasons: Vec<String>,
+) -> Result<HostFabricAdapterExecutionEvidence> {
+    validate_host_fabric_control_decision(decision)?;
+    validate_host_fabric_fulfillment_plan(plan)?;
+    validate_host_fabric_legacy_control_bridge(bridge)?;
+    let mut blocked_reasons = normalize_blockers(blocked_reasons);
+    let state = if request.fabric_control_role.is_none() {
+        FABRIC_ADAPTER_EXECUTION_SKIPPED
+    } else if decision.state == FABRIC_CONTROL_DECISION_DEGRADED {
+        FABRIC_ADAPTER_EXECUTION_DEGRADED
+    } else if decision.state == FABRIC_CONTROL_DECISION_READY && blocked_reasons.is_empty() {
+        FABRIC_ADAPTER_EXECUTION_SUCCEEDED
+    } else {
+        if blocked_reasons.is_empty() {
+            blocked_reasons.extend(decision.blocked_reasons.clone());
+        }
+        if blocked_reasons.is_empty() {
+            blocked_reasons.push(format!("hostAdapter:executionBlocked:{}", decision.state));
+        }
+        FABRIC_ADAPTER_EXECUTION_BLOCKED
+    };
+    let output_refs = if state == FABRIC_ADAPTER_EXECUTION_SUCCEEDED {
+        vec![format!(
+            "evidence:host-adapter:{}:{}:dry-run-ok",
+            request.service_id, request.operation
+        )]
+    } else {
+        vec![]
+    };
+    let mut evidence_refs = decision.evidence_refs.clone();
+    evidence_refs.extend(bridge.evidence_refs.clone());
+    evidence_refs.extend(output_refs.clone());
+    evidence_refs.sort();
+    evidence_refs.dedup();
+    let mut input_refs = vec![
+        decision.operation_ref.clone(),
+        plan.plan_id.clone(),
+        bridge.bridge_id.clone(),
+    ];
+    input_refs.extend(plan.member_contribution_refs.clone());
+    input_refs.sort();
+    input_refs.dedup();
+    let evidence = HostFabricAdapterExecutionEvidence {
+        kind: Some(RECORD_HOST_FABRIC_ADAPTER_EXECUTION_EVIDENCE.to_string()),
+        evidence_id: format!(
+            "hostFabric:adapterExecution:{}:{}:{}",
+            request.service_id, request.operation, request.requested_at
+        ),
+        fabric_ref: spec.fabric_ref.clone(),
+        host_ref: spec.host_ref.clone().unwrap_or_default(),
+        adapter_ref: spec.host_adapter_ref.clone(),
+        subject_ref: request.service_id.clone(),
+        operation_ref: decision.operation_ref.clone(),
+        state: state.to_string(),
+        source_decision_ref: Some(decision.decision_id.clone()),
+        source_plan_ref: Some(plan.plan_id.clone()),
+        source_bridge_ref: Some(bridge.bridge_id.clone()),
+        delegated_role_ref: decision.delegated_role_ref.clone(),
+        action_authority_refs: plan.action_authority_refs.clone(),
+        evidence_requirement_refs: plan.evidence_requirement_refs.clone(),
+        input_refs,
+        output_refs,
+        fallback_refs: decision.fallback_refs.clone(),
+        quarantine_refs: decision.quarantine_refs.clone(),
+        rollback_refs: plan.rollback_refs.clone(),
+        blocked_reasons,
+        evidence_refs,
+        safe_facts: json!({
+            "operation": request.operation,
+            "dryRun": request.dry_run,
+            "decisionState": decision.state,
+            "legacyBridgeState": bridge.state,
+        }),
+        observed_at,
+        expires_at: Some(observed_at + 300),
+    };
+    validate_host_fabric_adapter_execution_evidence(&evidence)?;
+    Ok(evidence)
+}
+
 fn fabric_role_ref(role: &str) -> String {
     let trimmed = role.trim();
     if trimmed.starts_with("role:") {
@@ -3737,6 +3855,7 @@ pub fn service_manager_lifecycle_fixture(issued_at: u64) -> Result<ServiceManage
         lifecycle_plans: vec![lifecycle_plan],
         host_fabric_fulfillment_plans: vec![host_fabric_fulfillment_plan],
         host_fabric_topology_projections: vec![host_fabric_topology_projection],
+        host_fabric_adapter_execution_evidence: vec![],
         service_hardening_postures: vec![service_hardening_posture],
         posture,
     };
@@ -3765,6 +3884,7 @@ pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixtu
         host_fabric_fulfillment_plans: vec![],
         host_fabric_topology_projections: vec![],
         host_fabric_legacy_control_bridges: vec![],
+        host_fabric_adapter_execution_evidence: vec![],
         service_hardening_postures: vec![],
         posture: None,
         updated_at: issued_at,
@@ -3841,6 +3961,7 @@ pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixtu
         blocked_reasons: aggregate_fulfillment_plan.blocked_reasons.clone(),
         aggregate_fulfillment_plan,
         aggregate_topology_projection,
+        adapter_execution_evidence: state.host_fabric_adapter_execution_evidence.clone(),
         shadow_parity,
         outcomes,
         service_hardening_observations,
@@ -3968,6 +4089,7 @@ pub fn blocked_operation_fixture(
         lifecycle_plans: vec![lifecycle_plan],
         host_fabric_fulfillment_plans: vec![host_fabric_fulfillment_plan],
         host_fabric_topology_projections: vec![host_fabric_topology_projection],
+        host_fabric_adapter_execution_evidence: vec![],
         service_hardening_postures: vec![service_hardening_posture],
         posture,
     };
@@ -4008,6 +4130,9 @@ pub fn validate_fixture(fixture: &ServiceManagerLifecycleFixture) -> Result<()> 
     for topology_projection in &fixture.host_fabric_topology_projections {
         validate_host_fabric_topology_projection(topology_projection)?;
     }
+    for execution_evidence in &fixture.host_fabric_adapter_execution_evidence {
+        validate_host_fabric_adapter_execution_evidence(execution_evidence)?;
+    }
     for service_hardening_posture in &fixture.service_hardening_postures {
         validate_service_hardening_posture(service_hardening_posture)?;
     }
@@ -4031,8 +4156,14 @@ pub fn validate_fabric_transition_fixture(fixture: &FabricTransitionFixture) -> 
         validate_host_fabric_fulfillment_plan(&outcome.host_fabric_fulfillment_plan)?;
         validate_host_fabric_topology_projection(&outcome.host_fabric_topology_projection)?;
         validate_host_fabric_legacy_control_bridge(&outcome.host_fabric_legacy_control_bridge)?;
+        validate_host_fabric_adapter_execution_evidence(
+            &outcome.host_fabric_adapter_execution_evidence,
+        )?;
         validate_service_hardening_posture(&outcome.service_hardening_posture)?;
         validate_service_manager_posture(&outcome.posture)?;
+    }
+    for execution_evidence in &fixture.adapter_execution_evidence {
+        validate_host_fabric_adapter_execution_evidence(execution_evidence)?;
     }
     for observation in &fixture.service_hardening_observations {
         validate_service_hardening_posture(&observation.service_hardening_posture)?;

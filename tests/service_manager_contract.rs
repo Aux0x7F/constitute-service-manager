@@ -4,10 +4,12 @@ use constitute_fabric::{
     reduce_host_fabric_shadow_parity,
 };
 use constitute_protocol::{
-    FABRIC_CONTRACT_TARGET_COMPATIBILITY_DEGRADED, FABRIC_CONTRACT_TARGET_REGISTRY_DEGRADED,
-    FABRIC_CONTRACT_TARGET_SELECTED, FABRIC_CONTRACT_TARGET_SLOT_DEGRADED,
-    FABRIC_CONTRACT_TARGET_SLOT_MISSING, FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED,
-    FABRIC_FULFILLMENT_PLAN_BLOCKED, FABRIC_FULFILLMENT_PLAN_READY, FABRIC_LEGACY_CONTROL_BLOCKED,
+    FABRIC_ADAPTER_EXECUTION_BLOCKED, FABRIC_ADAPTER_EXECUTION_SKIPPED,
+    FABRIC_ADAPTER_EXECUTION_SUCCEEDED, FABRIC_CONTRACT_TARGET_COMPATIBILITY_DEGRADED,
+    FABRIC_CONTRACT_TARGET_REGISTRY_DEGRADED, FABRIC_CONTRACT_TARGET_SELECTED,
+    FABRIC_CONTRACT_TARGET_SLOT_DEGRADED, FABRIC_CONTRACT_TARGET_SLOT_MISSING,
+    FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED, FABRIC_FULFILLMENT_PLAN_BLOCKED,
+    FABRIC_FULFILLMENT_PLAN_READY, FABRIC_LEGACY_CONTROL_BLOCKED,
     FABRIC_LEGACY_CONTROL_FALLBACK_AVAILABLE, FABRIC_LEGACY_CONTROL_LEGACY_DIRECT,
     FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_BUILD_PROCESSOR,
     FABRIC_MEMBER_ROLE_DOMAIN_SERVICE, FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION,
@@ -20,10 +22,11 @@ use constitute_protocol::{
     SERVICE_MANAGER_POSTURE_BLOCKED, SERVICE_MANAGER_POSTURE_READY,
     SERVICE_MANAGER_PROOF_STATE_BLOCKED, SURFACE_SECRET_BOUNDARY_BLOCKED, validate_contract_target,
     validate_contract_target_registry_posture, validate_cybersec_mitigation_consumer_posture,
-    validate_host_fabric_fulfillment_plan, validate_host_fabric_legacy_control_bridge,
-    validate_host_fabric_member_contribution, validate_host_fabric_topology_projection,
-    validate_lifecycle_plan_posture, validate_service_hardening_posture,
-    validate_service_manager_lab_proof, validate_service_manager_operation_posture,
+    validate_host_fabric_adapter_execution_evidence, validate_host_fabric_fulfillment_plan,
+    validate_host_fabric_legacy_control_bridge, validate_host_fabric_member_contribution,
+    validate_host_fabric_topology_projection, validate_lifecycle_plan_posture,
+    validate_service_hardening_posture, validate_service_manager_lab_proof,
+    validate_service_manager_operation_posture,
 };
 use constitute_service_manager::{
     ServiceOperationRequest, apply_service_operation, blocked_operation_fixture,
@@ -544,6 +547,7 @@ fn protected_posture_blocks_missing_lifecycle_proof() {
             lifecycle_plans: vec![],
             host_fabric_fulfillment_plans: vec![],
             host_fabric_topology_projections: vec![],
+            host_fabric_adapter_execution_evidence: vec![],
             service_hardening_postures: vec![],
             posture,
         },
@@ -750,6 +754,7 @@ fn dry_run_operation_persists_state_and_reduces_posture() {
     assert_eq!(state.lifecycle_plans.len(), 1);
     assert_eq!(state.host_fabric_fulfillment_plans.len(), 1);
     assert_eq!(state.host_fabric_topology_projections.len(), 1);
+    assert_eq!(state.host_fabric_adapter_execution_evidence.len(), 1);
     assert_eq!(state.service_hardening_postures.len(), 1);
     assert_eq!(outcome.posture.state, SERVICE_MANAGER_POSTURE_READY);
     assert!(outcome.host_fabric_contribution.is_some());
@@ -765,6 +770,21 @@ fn dry_run_operation_persists_state_and_reduces_posture() {
         outcome.host_fabric_topology_projection.source_plan_ref,
         outcome.host_fabric_fulfillment_plan.plan_id
     );
+    assert_eq!(
+        outcome.host_fabric_adapter_execution_evidence.state,
+        FABRIC_ADAPTER_EXECUTION_SKIPPED
+    );
+    assert_eq!(
+        outcome
+            .host_fabric_adapter_execution_evidence
+            .source_bridge_ref
+            .as_deref(),
+        Some(outcome.host_fabric_legacy_control_bridge.bridge_id.as_str())
+    );
+    validate_host_fabric_adapter_execution_evidence(
+        &outcome.host_fabric_adapter_execution_evidence,
+    )
+    .expect("adapter execution evidence validates");
     assert_eq!(
         outcome.contract_target.state,
         constitute_protocol::FABRIC_CONTRACT_TARGET_READY
@@ -819,6 +839,16 @@ fn fabric_control_role_blocks_without_existing_fulfillment_plan() {
     );
     assert!(
         outcome
+            .blocked_reasons
+            .contains(&"hostFabric:controlPlanMissing:role:hostServiceAdapter".to_string())
+    );
+    assert_eq!(
+        outcome.host_fabric_adapter_execution_evidence.state,
+        FABRIC_ADAPTER_EXECUTION_BLOCKED
+    );
+    assert!(
+        outcome
+            .host_fabric_adapter_execution_evidence
             .blocked_reasons
             .contains(&"hostFabric:controlPlanMissing:role:hostServiceAdapter".to_string())
     );
@@ -899,6 +929,33 @@ fn fabric_control_role_allows_operation_when_latest_plan_is_ready() {
     );
     assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED);
     assert_eq!(outcome.fabric_control_decision.state, "ready");
+    assert_eq!(
+        outcome.host_fabric_adapter_execution_evidence.state,
+        FABRIC_ADAPTER_EXECUTION_SUCCEEDED
+    );
+    assert_eq!(
+        outcome
+            .host_fabric_adapter_execution_evidence
+            .source_decision_ref
+            .as_deref(),
+        Some(outcome.fabric_control_decision.decision_id.as_str())
+    );
+    assert_eq!(
+        outcome
+            .host_fabric_adapter_execution_evidence
+            .source_plan_ref
+            .as_deref(),
+        Some(warmup.host_fabric_fulfillment_plan.plan_id.as_str())
+    );
+    assert!(
+        outcome
+            .host_fabric_adapter_execution_evidence
+            .output_refs
+            .contains(&format!(
+                "evidence:host-adapter:{}:{}:dry-run-ok",
+                outcome.service_id, outcome.operation
+            ))
+    );
     assert_eq!(
         outcome
             .fabric_control_decision
@@ -1208,12 +1265,16 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
     assert_eq!(fixture.services.len(), 8);
     assert_eq!(fixture.outcomes.len(), 8);
     assert_eq!(fixture.service_hardening_observations.len(), 8);
+    assert_eq!(fixture.adapter_execution_evidence.len(), 8);
     assert_eq!(fixture.transition_state, FABRIC_FULFILLMENT_PLAN_READY);
     assert!(fixture.blocked_reasons.is_empty());
     assert!(fixture.shadow_parity.disagreement_role_refs.is_empty());
     assert!(fixture.shadow_parity.blocked_reasons.is_empty());
     assert!(fixture.outcomes.iter().all(|outcome| {
         outcome.host_fabric_legacy_control_bridge.state == FABRIC_LEGACY_CONTROL_LEGACY_DIRECT
+    }));
+    assert!(fixture.outcomes.iter().all(|outcome| {
+        outcome.host_fabric_adapter_execution_evidence.state == FABRIC_ADAPTER_EXECUTION_SKIPPED
     }));
 
     let service_roles = fixture
@@ -1373,6 +1434,7 @@ fn state_file_roundtrips_through_cli_contract_helpers() {
         service_manager_status(&loaded, "lab-service", DEFAULT_NOW + 60).expect("status posture");
 
     assert_eq!(loaded.operations.len(), 1);
+    assert_eq!(loaded.host_fabric_adapter_execution_evidence.len(), 1);
     assert_eq!(posture.state, SERVICE_MANAGER_POSTURE_READY);
     assert_eq!(
         outcome.operation_posture.operation,
@@ -1465,6 +1527,28 @@ fn cli_run_and_status_roundtrip_state_file() {
     )
     .expect("legacy bridge validates");
     assert_eq!(
+        controlled_outcome
+            .host_fabric_adapter_execution_evidence
+            .state,
+        FABRIC_ADAPTER_EXECUTION_SUCCEEDED
+    );
+    assert_eq!(
+        controlled_outcome
+            .host_fabric_adapter_execution_evidence
+            .source_bridge_ref
+            .as_deref(),
+        Some(
+            controlled_outcome
+                .host_fabric_legacy_control_bridge
+                .bridge_id
+                .as_str()
+        )
+    );
+    validate_host_fabric_adapter_execution_evidence(
+        &controlled_outcome.host_fabric_adapter_execution_evidence,
+    )
+    .expect("adapter execution evidence validates");
+    assert_eq!(
         controlled_outcome.state,
         SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED
     );
@@ -1513,6 +1597,10 @@ fn fabric_control_blocks_expired_plan_before_adapter_execution() {
     assert_eq!(
         outcome.host_fabric_legacy_control_bridge.state,
         FABRIC_LEGACY_CONTROL_BLOCKED
+    );
+    assert_eq!(
+        outcome.host_fabric_adapter_execution_evidence.state,
+        FABRIC_ADAPTER_EXECUTION_BLOCKED
     );
     assert!(
         outcome
