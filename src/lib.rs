@@ -52,6 +52,8 @@ use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
 
+pub mod mitigation;
+
 pub const DEFAULT_MANAGER_ID: &str = "manager:lab-service";
 pub const DEFAULT_SUBJECT_REF: &str = "service:lab-managed";
 pub const DEFAULT_MANAGER_REF: &str = "member:service-manager:lab";

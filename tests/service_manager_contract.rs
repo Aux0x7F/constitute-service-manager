@@ -15,10 +15,10 @@ use constitute_protocol::{
     SERVICE_MANAGER_OPERATION_STATE_BLOCKED, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
     SERVICE_MANAGER_POSTURE_BLOCKED, SERVICE_MANAGER_POSTURE_READY,
     SERVICE_MANAGER_PROOF_STATE_BLOCKED, SURFACE_SECRET_BOUNDARY_BLOCKED, validate_contract_target,
-    validate_contract_target_registry_posture, validate_host_fabric_fulfillment_plan,
-    validate_host_fabric_member_contribution, validate_lifecycle_plan_posture,
-    validate_service_hardening_posture, validate_service_manager_lab_proof,
-    validate_service_manager_operation_posture,
+    validate_contract_target_registry_posture, validate_cybersec_mitigation_consumer_posture,
+    validate_host_fabric_fulfillment_plan, validate_host_fabric_member_contribution,
+    validate_lifecycle_plan_posture, validate_service_hardening_posture,
+    validate_service_manager_lab_proof, validate_service_manager_operation_posture,
 };
 use constitute_service_manager::{
     ServiceOperationRequest, apply_service_operation, blocked_operation_fixture,
@@ -208,6 +208,60 @@ fn lifecycle_fixture_covers_manager_operations() {
         .find(|operation| operation.operation == SERVICE_MANAGER_OPERATION_ROLLBACK)
         .expect("rollback operation");
     assert!(rollback.rollback_ref.is_some());
+}
+
+#[test]
+fn service_manager_reports_mitigation_recommendation_consumer_posture() {
+    let recommendation = constitute_protocol::CybersecMitigationRecommendationRecord {
+        kind: Some(constitute_protocol::RECORD_CYBERSEC_MITIGATION_RECOMMENDATION.to_string()),
+        recommendation_id: "cybersec:recommendation:service-hardening:retain-evidence".to_string(),
+        finding_ref: "cybersec:finding:service-hardening".to_string(),
+        processor_report_ref: "event-fabric-report:logging.cybersec.hardening".to_string(),
+        recommender_ref: "processor:constitute-cybersec".to_string(),
+        action_kind: "retainEvidence".to_string(),
+        target_ref: "service:lab-managed".to_string(),
+        state: "recommended".to_string(),
+        authority_refs: vec!["authority:security-ops".to_string()],
+        consumer_refs: vec!["constitute-service-manager".to_string()],
+        evidence_refs: vec!["cybersec:finding:service-hardening".to_string()],
+        safe_facts: serde_json::json!({ "recommendationOnly": true }),
+        blocked_reasons: Vec::new(),
+        issued_at: DEFAULT_NOW,
+        expires_at: Some(DEFAULT_NOW + 600),
+    };
+    let posture =
+        constitute_service_manager::mitigation::service_manager_mitigation_consumer_posture(
+            &recommendation,
+            vec!["authority:service-manager-mitigation".to_string()],
+            DEFAULT_NOW + 1,
+        )
+        .expect("service-manager consumer posture");
+    validate_cybersec_mitigation_consumer_posture(&posture).expect("posture validates");
+    assert_eq!(posture.state, "actionable");
+    assert_eq!(posture.consumer_ref, "constitute-service-manager");
+    assert_eq!(posture.action_kind, "retainEvidence");
+    assert_eq!(posture.safe_facts["hostEffectGated"], true);
+
+    let waiting_authority =
+        constitute_service_manager::mitigation::service_manager_mitigation_consumer_posture(
+            &recommendation,
+            Vec::new(),
+            DEFAULT_NOW + 1,
+        )
+        .expect("waiting authority posture");
+    assert_eq!(waiting_authority.state, "waitingAuthority");
+
+    let mut unsupported = recommendation;
+    unsupported.action_kind = "block".to_string();
+    let posture =
+        constitute_service_manager::mitigation::service_manager_mitigation_consumer_posture(
+            &unsupported,
+            vec!["authority:service-manager-mitigation".to_string()],
+            DEFAULT_NOW + 1,
+        )
+        .expect("unsupported posture");
+    assert_eq!(posture.state, "unsupported");
+    assert_eq!(posture.blocked_reasons, vec!["unsupportedAction:block"]);
 }
 
 #[test]
