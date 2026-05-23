@@ -6,8 +6,8 @@ use constitute_fabric::{
     reduce_host_fabric_shadow_parity,
 };
 use constitute_protocol::{
-    CARRIER_EDGE_ADAPTER_WEB_SOCKET, CarrierEdgeRequirement, CarrierEdgeSelection, ContractTarget,
-    ContractTargetRegistryPosture, ContractTargetSlotPosture,
+    CAPABILITY_SWARM_EDGE_ATTACH, CARRIER_EDGE_ADAPTER_WEB_SOCKET, CarrierEdgeRequirement,
+    CarrierEdgeSelection, ContractTarget, ContractTargetRegistryPosture, ContractTargetSlotPosture,
     CybersecMitigationConsumerPostureRecord, CybersecMitigationRecommendationRecord,
     FABRIC_ADAPTER_EXECUTION_BLOCKED, FABRIC_ADAPTER_EXECUTION_DEGRADED,
     FABRIC_ADAPTER_EXECUTION_SKIPPED, FABRIC_ADAPTER_EXECUTION_SUCCEEDED,
@@ -4019,7 +4019,7 @@ fn reduce_fabric_transition_carrier_edges(
                         .unwrap_or_else(|| DEFAULT_ASSOCIATION_HANDOFF_REF.to_string()),
                 ),
                 policy_ref: Some("policy:carrier-edge:fabric-transition".to_string()),
-                required_capability_refs: vec!["swarm.edge.attach".to_string()],
+                required_capability_refs: vec![CAPABILITY_SWARM_EDGE_ATTACH.to_string()],
                 candidates: gateway_candidates.clone(),
                 evidence_refs: vec![
                     "evidence:fabric-transition:carrier-edge".to_string(),
