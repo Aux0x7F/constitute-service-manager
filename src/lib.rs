@@ -30,7 +30,8 @@ use constitute_protocol::{
     FABRIC_MEMBER_CONTRIBUTION_BLOCKED, FABRIC_MEMBER_CONTRIBUTION_RUNNING,
     FABRIC_MEMBER_ROLE_BUILD_PROCESSOR, FABRIC_MEMBER_ROLE_DOMAIN_SERVICE,
     FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION, FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
-    FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR, FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE,
+    FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR, FABRIC_MEMBER_ROLE_RUNTIME,
+    FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE, FABRIC_MEMBER_ROLE_SURFACE,
     HostFabricControlDecision, HostFabricFulfillmentPlan, HostFabricLegacyControlBridge,
     HostFabricMemberContribution, HostFabricTopologyProjection, LifecyclePhasePosture,
     LifecyclePlanPosture, RECORD_CONTRACT_TARGET, RECORD_CONTRACT_TARGET_REGISTRY_POSTURE,
@@ -537,12 +538,70 @@ pub fn build_processor_managed_service_spec() -> ManagedServiceSpec {
     spec
 }
 
+pub fn runtime_managed_service_spec() -> ManagedServiceSpec {
+    let mut spec = default_managed_service_spec();
+    spec.service_id = "constitute-runtime".to_string();
+    spec.subject_ref = "runtime:browser-orchestrator".to_string();
+    spec.fabric_role = FABRIC_MEMBER_ROLE_RUNTIME.to_string();
+    spec.host_adapter_ref = "contract:runtime.orchestration@0.1.0".to_string();
+    spec.lifecycle_contract_ref = "contract:lifecycle.runtime@0.1.0".to_string();
+    spec.app_contract_ref = Some("app:contract:constitute-runtime@0.1.0".to_string());
+    spec.build_ref = Some("build:constitute-runtime:browser".to_string());
+    spec.content_index_refs = vec!["content-index:source:constitute-account-runtime".to_string()];
+    spec.source_graph_refs = vec!["source:graph:constitute-account-runtime".to_string()];
+    spec.source_snapshot_refs =
+        vec!["source:snapshot:constitute-account-runtime:current".to_string()];
+    spec.source_operation_refs =
+        vec!["source:operation:constitute-account-runtime:ref-update".to_string()];
+    spec.project_refs = vec!["project:constituency:runtime".to_string()];
+    spec.work_item_refs = vec!["work-item:fabric-transition:runtime".to_string()];
+    spec.build_run_refs = vec!["build:run:constitute-runtime:browser".to_string()];
+    spec.build_artifact_refs = vec!["build:artifact:constitute-runtime:browser".to_string()];
+    spec.build_proof_refs = vec!["build-proof:constitute-runtime:browser".to_string()];
+    spec.release_candidate_refs = vec!["release:candidate:constitute-runtime:browser".to_string()];
+    spec.release_ref = Some("release:constitute-runtime:browser".to_string());
+    spec.rollback_ref = Some("rollback:constitute-runtime:browser".to_string());
+    spec.grant_refs = vec!["grant:runtime:orchestration".to_string()];
+    spec.materialization_budget_refs = vec!["materialization-budget:runtime".to_string()];
+    spec.retention_refs = vec!["retention:runtime:posture".to_string()];
+    spec
+}
+
+pub fn surface_managed_service_spec() -> ManagedServiceSpec {
+    let mut spec = default_managed_service_spec();
+    spec.service_id = "constitute-surface".to_string();
+    spec.subject_ref = "surface:app-composition".to_string();
+    spec.fabric_role = FABRIC_MEMBER_ROLE_SURFACE.to_string();
+    spec.host_adapter_ref = "contract:surface.app-composition@0.1.0".to_string();
+    spec.lifecycle_contract_ref = "contract:lifecycle.surface@0.1.0".to_string();
+    spec.app_contract_ref = Some("app:contract:constitute-surface@0.1.0".to_string());
+    spec.build_ref = Some("build:constitute-surface:browser".to_string());
+    spec.content_index_refs = vec!["content-index:source:constitute-surface".to_string()];
+    spec.source_graph_refs = vec!["source:graph:constitute-surface".to_string()];
+    spec.source_snapshot_refs = vec!["source:snapshot:constitute-surface:current".to_string()];
+    spec.source_operation_refs = vec!["source:operation:constitute-surface:ref-update".to_string()];
+    spec.project_refs = vec!["project:constituency:surface".to_string()];
+    spec.work_item_refs = vec!["work-item:fabric-transition:surface".to_string()];
+    spec.build_run_refs = vec!["build:run:constitute-surface:browser".to_string()];
+    spec.build_artifact_refs = vec!["build:artifact:constitute-surface:browser".to_string()];
+    spec.build_proof_refs = vec!["build-proof:constitute-surface:browser".to_string()];
+    spec.release_candidate_refs = vec!["release:candidate:constitute-surface:browser".to_string()];
+    spec.release_ref = Some("release:constitute-surface:browser".to_string());
+    spec.rollback_ref = Some("rollback:constitute-surface:browser".to_string());
+    spec.grant_refs = vec!["grant:surface:app-composition".to_string()];
+    spec.materialization_budget_refs = vec!["materialization-budget:surface".to_string()];
+    spec.retention_refs = vec!["retention:surface:posture".to_string()];
+    spec
+}
+
 pub fn current_fabric_transition_service_specs() -> Vec<ManagedServiceSpec> {
     vec![
         service_manager_host_adapter_managed_service_spec(),
         gateway_association_managed_service_spec(),
         storage_fulfillment_managed_service_spec(),
         build_processor_managed_service_spec(),
+        runtime_managed_service_spec(),
+        surface_managed_service_spec(),
         logging_processor_managed_service_spec(),
         cybersec_processor_managed_service_spec(),
     ]

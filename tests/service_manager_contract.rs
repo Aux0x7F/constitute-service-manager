@@ -12,7 +12,8 @@ use constitute_protocol::{
     FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_BUILD_PROCESSOR,
     FABRIC_MEMBER_ROLE_DOMAIN_SERVICE, FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION,
     FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER, FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR,
-    FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE, SERVICE_MANAGER_OPERATION_RELEASE,
+    FABRIC_MEMBER_ROLE_RUNTIME, FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE,
+    FABRIC_MEMBER_ROLE_SURFACE, SERVICE_MANAGER_OPERATION_RELEASE,
     SERVICE_MANAGER_OPERATION_RESTART, SERVICE_MANAGER_OPERATION_ROLLBACK,
     SERVICE_MANAGER_OPERATION_SECRET_READY, SERVICE_MANAGER_OPERATION_START,
     SERVICE_MANAGER_OPERATION_STATE_BLOCKED, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
@@ -1154,9 +1155,9 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
     validate_fabric_transition_fixture(&fixture).expect("fixture validates");
 
     assert_eq!(fixture.family_ref, "branch-family:0x/fabric-transition");
-    assert_eq!(fixture.services.len(), 6);
-    assert_eq!(fixture.outcomes.len(), 6);
-    assert_eq!(fixture.service_hardening_observations.len(), 6);
+    assert_eq!(fixture.services.len(), 8);
+    assert_eq!(fixture.outcomes.len(), 8);
+    assert_eq!(fixture.service_hardening_observations.len(), 8);
     assert_eq!(fixture.transition_state, FABRIC_FULFILLMENT_PLAN_READY);
     assert!(fixture.blocked_reasons.is_empty());
     assert!(fixture.shadow_parity.disagreement_role_refs.is_empty());
@@ -1174,6 +1175,8 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
     assert!(service_roles.contains(FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION));
     assert!(service_roles.contains(FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE));
     assert!(service_roles.contains(FABRIC_MEMBER_ROLE_BUILD_PROCESSOR));
+    assert!(service_roles.contains(FABRIC_MEMBER_ROLE_RUNTIME));
+    assert!(service_roles.contains(FABRIC_MEMBER_ROLE_SURFACE));
     assert!(service_roles.contains(FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR));
     assert!(service_roles.contains(FABRIC_MEMBER_ROLE_DOMAIN_SERVICE));
 
@@ -1187,6 +1190,8 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION)));
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE)));
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_BUILD_PROCESSOR)));
+    assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_RUNTIME)));
+    assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_SURFACE)));
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR)));
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_DOMAIN_SERVICE)));
     assert_eq!(
@@ -1194,9 +1199,10 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
             .aggregate_fulfillment_plan
             .member_contribution_refs
             .len(),
-        6
+        8
     );
-    assert_eq!(fixture.shadow_parity.agreement_role_refs.len(), 6);
+    assert_eq!(fixture.shadow_parity.agreement_role_refs.len(), 8);
+    assert_eq!(fixture.aggregate_topology_projection.role_postures.len(), 8);
     assert_eq!(
         fixture
             .shadow_parity
