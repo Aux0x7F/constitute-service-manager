@@ -1,5 +1,8 @@
 use anyhow::{Result, anyhow};
-use constitute_fabric::{HostFabricReductionInput, HostFabricRoleRequirement, reduce_host_fabric};
+use constitute_fabric::{
+    HostFabricReductionInput, HostFabricRoleRequirement, HostFabricShadowParity,
+    HostFabricShadowParityInput, reduce_host_fabric, reduce_host_fabric_shadow_parity,
+};
 use constitute_protocol::{
     ContractTarget, ContractTargetRegistryPosture, ContractTargetSlotPosture,
     CybersecMitigationConsumerPostureRecord, CybersecMitigationRecommendationRecord,
@@ -115,6 +118,7 @@ pub struct FabricTransitionFixture {
     pub outcomes: Vec<ServiceOperationOutcome>,
     pub service_hardening_observations: Vec<ServiceManagerHardeningObservation>,
     pub aggregate_fulfillment_plan: HostFabricFulfillmentPlan,
+    pub shadow_parity: HostFabricShadowParity,
     pub transition_state: String,
     #[serde(default)]
     pub blocked_reasons: Vec<String>,
@@ -3364,7 +3368,7 @@ pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixtu
             min_ready: 1,
         })
         .collect::<Vec<_>>();
-    let reduction = reduce_host_fabric(HostFabricReductionInput {
+    let reduction_input = HostFabricReductionInput {
         plan_id: "fabric-plan:fabric-transition:current-services".to_string(),
         fabric_ref: fabric_ref.clone(),
         host_ref: host_ref.clone(),
@@ -3379,8 +3383,16 @@ pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixtu
         association_handoff_ref: Some(DEFAULT_ASSOCIATION_HANDOFF_REF.to_string()),
         observed_at: issued_at + 2_000,
         expires_at: Some(issued_at + 5_600),
+    };
+    let shadow_parity = reduce_host_fabric_shadow_parity(HostFabricShadowParityInput {
+        reduction: reduction_input,
+        legacy_ready_role_refs: services
+            .iter()
+            .map(|service| service.fabric_role.clone())
+            .collect(),
+        legacy_blocked_role_refs: vec![],
     })?;
-    let aggregate_fulfillment_plan = reduction.fulfillment_plan;
+    let aggregate_fulfillment_plan = shadow_parity.reduction.fulfillment_plan.clone();
     let service_hardening_observations = outcomes
         .iter()
         .enumerate()
@@ -3399,6 +3411,7 @@ pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixtu
         transition_state: aggregate_fulfillment_plan.state.clone(),
         blocked_reasons: aggregate_fulfillment_plan.blocked_reasons.clone(),
         aggregate_fulfillment_plan,
+        shadow_parity,
         outcomes,
         service_hardening_observations,
     };
@@ -3567,6 +3580,7 @@ pub fn validate_fixture(fixture: &ServiceManagerLifecycleFixture) -> Result<()> 
 
 pub fn validate_fabric_transition_fixture(fixture: &FabricTransitionFixture) -> Result<()> {
     validate_host_fabric_fulfillment_plan(&fixture.aggregate_fulfillment_plan)?;
+    validate_host_fabric_fulfillment_plan(&fixture.shadow_parity.reduction.fulfillment_plan)?;
     for outcome in &fixture.outcomes {
         validate_service_manager_operation_posture(&outcome.operation_posture)?;
         validate_service_manager_proof_digest(&outcome.proof_digest)?;

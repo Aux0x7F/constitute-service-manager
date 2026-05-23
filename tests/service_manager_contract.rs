@@ -1132,6 +1132,8 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
     assert_eq!(fixture.service_hardening_observations.len(), 6);
     assert_eq!(fixture.transition_state, FABRIC_FULFILLMENT_PLAN_READY);
     assert!(fixture.blocked_reasons.is_empty());
+    assert!(fixture.shadow_parity.disagreement_role_refs.is_empty());
+    assert!(fixture.shadow_parity.blocked_reasons.is_empty());
 
     let service_roles = fixture
         .services
@@ -1163,6 +1165,15 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
             .member_contribution_refs
             .len(),
         6
+    );
+    assert_eq!(fixture.shadow_parity.agreement_role_refs.len(), 6);
+    assert_eq!(
+        fixture
+            .shadow_parity
+            .reduction
+            .fulfillment_plan
+            .member_contribution_refs,
+        fixture.aggregate_fulfillment_plan.member_contribution_refs
     );
     assert!(
         fixture
