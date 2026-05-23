@@ -15,47 +15,47 @@ use constitute_protocol::{
     FABRIC_CONTROL_DECISION_DEGRADED, FABRIC_CONTROL_DECISION_NOT_REQUESTED,
     FABRIC_CONTROL_DECISION_READY, FABRIC_CONTROL_DECISION_WAITING_PLAN,
     FABRIC_FULFILLMENT_PLAN_BLOCKED, FABRIC_FULFILLMENT_PLAN_DEGRADED,
-    FABRIC_FULFILLMENT_PLAN_READY,
-    FABRIC_LIFECYCLE_PHASE_BLOCKED, FABRIC_LIFECYCLE_PHASE_BUILD, FABRIC_LIFECYCLE_PHASE_CLEANUP,
-    FABRIC_LIFECYCLE_PHASE_LOAD, FABRIC_LIFECYCLE_PHASE_NOT_REQUIRED,
-    FABRIC_LIFECYCLE_PHASE_OBSERVE, FABRIC_LIFECYCLE_PHASE_READY, FABRIC_LIFECYCLE_PHASE_RELEASE,
-    FABRIC_LIFECYCLE_PHASE_ROLLBACK, FABRIC_LIFECYCLE_PHASE_RUN, FABRIC_LIFECYCLE_PHASE_RUNNING,
-    FABRIC_LIFECYCLE_PHASE_SOURCE, FABRIC_LIFECYCLE_PHASE_SUCCEEDED, FABRIC_LIFECYCLE_PLAN_BLOCKED,
-    FABRIC_LIFECYCLE_PLAN_READY, FABRIC_MEMBER_CONTRIBUTION_BLOCKED,
-    FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_DOMAIN_SERVICE,
+    FABRIC_FULFILLMENT_PLAN_READY, FABRIC_LIFECYCLE_PHASE_BLOCKED, FABRIC_LIFECYCLE_PHASE_BUILD,
+    FABRIC_LIFECYCLE_PHASE_CLEANUP, FABRIC_LIFECYCLE_PHASE_LOAD,
+    FABRIC_LIFECYCLE_PHASE_NOT_REQUIRED, FABRIC_LIFECYCLE_PHASE_OBSERVE,
+    FABRIC_LIFECYCLE_PHASE_READY, FABRIC_LIFECYCLE_PHASE_RELEASE, FABRIC_LIFECYCLE_PHASE_ROLLBACK,
+    FABRIC_LIFECYCLE_PHASE_RUN, FABRIC_LIFECYCLE_PHASE_RUNNING, FABRIC_LIFECYCLE_PHASE_SOURCE,
+    FABRIC_LIFECYCLE_PHASE_SUCCEEDED, FABRIC_LIFECYCLE_PLAN_BLOCKED, FABRIC_LIFECYCLE_PLAN_READY,
+    FABRIC_MEMBER_CONTRIBUTION_BLOCKED, FABRIC_MEMBER_CONTRIBUTION_RUNNING,
+    FABRIC_MEMBER_ROLE_BUILD_PROCESSOR, FABRIC_MEMBER_ROLE_DOMAIN_SERVICE,
     FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION, FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
-    FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR, HostFabricControlDecision,
-    HostFabricFulfillmentPlan, HostFabricMemberContribution, LifecyclePhasePosture,
-    LifecyclePlanPosture, RECORD_CONTRACT_TARGET,
+    FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR, FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE,
+    HostFabricControlDecision, HostFabricFulfillmentPlan, HostFabricMemberContribution,
+    LifecyclePhasePosture, LifecyclePlanPosture, RECORD_CONTRACT_TARGET,
     RECORD_CONTRACT_TARGET_REGISTRY_POSTURE, RECORD_CYBERSEC_MITIGATION_RECOMMENDATION,
     RECORD_HOST_FABRIC_CONTROL_DECISION, RECORD_HOST_FABRIC_FULFILLMENT_PLAN,
     RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION, RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE,
     RECORD_SERVICE_HARDENING_POSTURE, RECORD_SERVICE_MANAGER_LAB_PROOF,
-    RECORD_SERVICE_MANAGER_OPERATION_POSTURE,
-    RECORD_SERVICE_MANAGER_POSTURE, RECORD_SERVICE_MANAGER_PROOF_DIGEST,
-    RECORD_SERVICE_MANAGER_RELEASE_CONTRACT, RECORD_SERVICE_MANAGER_SECRET_BOUNDARY,
-    RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture, SERVICE_MANAGER_OPERATION_HEALTH_CHECK,
-    SERVICE_MANAGER_OPERATION_INSTALL, SERVICE_MANAGER_OPERATION_PROMOTE,
-    SERVICE_MANAGER_OPERATION_RELEASE, SERVICE_MANAGER_OPERATION_RESTART,
-    SERVICE_MANAGER_OPERATION_ROLLBACK, SERVICE_MANAGER_OPERATION_SECRET_READY,
-    SERVICE_MANAGER_OPERATION_START, SERVICE_MANAGER_OPERATION_STATE_BLOCKED,
-    SERVICE_MANAGER_OPERATION_STATE_FAILED, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
-    SERVICE_MANAGER_OPERATION_STOP, SERVICE_MANAGER_OPERATION_UPDATE,
-    SERVICE_MANAGER_POSTURE_BLOCKED, SERVICE_MANAGER_POSTURE_READY,
-    SERVICE_MANAGER_PROOF_STATE_BLOCKED, SERVICE_MANAGER_PROOF_STATE_FAILED,
-    SERVICE_MANAGER_PROOF_STATE_PROVED, SURFACE_APP_CONTRACT_STATE_READY,
-    SURFACE_SECRET_BOUNDARY_RESOLVED, ServiceHardeningPostureRecord, ServiceManagerLabProofRecord,
+    RECORD_SERVICE_MANAGER_OPERATION_POSTURE, RECORD_SERVICE_MANAGER_POSTURE,
+    RECORD_SERVICE_MANAGER_PROOF_DIGEST, RECORD_SERVICE_MANAGER_RELEASE_CONTRACT,
+    RECORD_SERVICE_MANAGER_SECRET_BOUNDARY, RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture,
+    SERVICE_MANAGER_OPERATION_HEALTH_CHECK, SERVICE_MANAGER_OPERATION_INSTALL,
+    SERVICE_MANAGER_OPERATION_PROMOTE, SERVICE_MANAGER_OPERATION_RELEASE,
+    SERVICE_MANAGER_OPERATION_RESTART, SERVICE_MANAGER_OPERATION_ROLLBACK,
+    SERVICE_MANAGER_OPERATION_SECRET_READY, SERVICE_MANAGER_OPERATION_START,
+    SERVICE_MANAGER_OPERATION_STATE_BLOCKED, SERVICE_MANAGER_OPERATION_STATE_FAILED,
+    SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED, SERVICE_MANAGER_OPERATION_STOP,
+    SERVICE_MANAGER_OPERATION_UPDATE, SERVICE_MANAGER_POSTURE_BLOCKED,
+    SERVICE_MANAGER_POSTURE_READY, SERVICE_MANAGER_PROOF_STATE_BLOCKED,
+    SERVICE_MANAGER_PROOF_STATE_FAILED, SERVICE_MANAGER_PROOF_STATE_PROVED,
+    SURFACE_APP_CONTRACT_STATE_READY, SURFACE_SECRET_BOUNDARY_RESOLVED,
+    ServiceHardeningPostureRecord, ServiceManagerLabProofRecord,
     ServiceManagerOperationPostureRecord, ServiceManagerPostureRecord,
     ServiceManagerProofDigestRecord, ServiceManagerReleaseContractRecord,
     ServiceManagerSecretBoundaryRecord, ServiceManagerTrainDigestRecord, validate_contract_target,
     validate_contract_target_registry_posture, validate_cybersec_mitigation_consumer_posture,
     validate_cybersec_mitigation_recommendation, validate_host_fabric_control_decision,
     validate_host_fabric_fulfillment_plan, validate_host_fabric_member_contribution,
-    validate_lifecycle_plan_posture,
-    validate_service_hardening_posture, validate_service_manager_lab_proof,
-    validate_service_manager_operation_posture, validate_service_manager_posture,
-    validate_service_manager_proof_digest, validate_service_manager_release_contract,
-    validate_service_manager_secret_boundary, validate_service_manager_train_digest,
+    validate_lifecycle_plan_posture, validate_service_hardening_posture,
+    validate_service_manager_lab_proof, validate_service_manager_operation_posture,
+    validate_service_manager_posture, validate_service_manager_proof_digest,
+    validate_service_manager_release_contract, validate_service_manager_secret_boundary,
+    validate_service_manager_train_digest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -459,10 +459,73 @@ pub fn logging_processor_managed_service_spec() -> ManagedServiceSpec {
     spec
 }
 
+pub fn storage_fulfillment_managed_service_spec() -> ManagedServiceSpec {
+    let mut spec = default_managed_service_spec();
+    spec.service_id = "constitute-storage".to_string();
+    spec.subject_ref = "service:storage.journal-cache".to_string();
+    spec.fabric_role = FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE.to_string();
+    spec.host_adapter_ref = "contract:storage.journal-cache@0.1.0".to_string();
+    spec.lifecycle_contract_ref = "contract:lifecycle.storage-journal-cache@0.1.0".to_string();
+    spec.app_contract_ref = Some("app:contract:constitute-storage@0.1.0".to_string());
+    spec.build_ref = Some("build:constitute-storage:journal-cache".to_string());
+    spec.content_index_refs = vec!["content-index:source:constitute-storage".to_string()];
+    spec.source_graph_refs = vec!["source:graph:constitute-storage".to_string()];
+    spec.source_snapshot_refs = vec!["source:snapshot:constitute-storage:current".to_string()];
+    spec.source_operation_refs = vec!["source:operation:constitute-storage:ref-update".to_string()];
+    spec.project_refs = vec!["project:constituency:storage".to_string()];
+    spec.work_item_refs = vec!["work-item:fabric-transition:storage".to_string()];
+    spec.build_run_refs = vec!["build:run:constitute-storage:journal-cache".to_string()];
+    spec.build_artifact_refs = vec!["build:artifact:constitute-storage:journal-cache".to_string()];
+    spec.build_proof_refs = vec!["build-proof:constitute-storage:journal-cache".to_string()];
+    spec.release_candidate_refs =
+        vec!["release:candidate:constitute-storage:journal-cache".to_string()];
+    spec.release_ref = Some("release:constitute-storage:journal-cache".to_string());
+    spec.rollback_ref = Some("rollback:constitute-storage:journal-cache".to_string());
+    spec.access_group_refs = vec!["access-group:storage.fabric.default".to_string()];
+    spec.grant_refs = vec!["grant:storage:journal-cache".to_string()];
+    spec.materialization_budget_refs =
+        vec!["materialization-budget:storage.journal-cache".to_string()];
+    spec.retention_refs = vec!["retention:storage:journal-cache".to_string()];
+    spec
+}
+
+pub fn build_processor_managed_service_spec() -> ManagedServiceSpec {
+    let mut spec = default_managed_service_spec();
+    spec.service_id = "constitute-build".to_string();
+    spec.subject_ref = "service:build.processor".to_string();
+    spec.fabric_role = FABRIC_MEMBER_ROLE_BUILD_PROCESSOR.to_string();
+    spec.host_adapter_ref = "contract:build.processor@0.1.0".to_string();
+    spec.lifecycle_contract_ref = "contract:lifecycle.build-processor@0.1.0".to_string();
+    spec.app_contract_ref = Some("app:contract:constitute-build@0.1.0".to_string());
+    spec.build_ref = Some("build:constitute-build:processor".to_string());
+    spec.content_index_refs = vec!["content-index:source:constitute-build".to_string()];
+    spec.source_graph_refs = vec!["source:graph:constitute-build".to_string()];
+    spec.source_snapshot_refs = vec!["source:snapshot:constitute-build:current".to_string()];
+    spec.source_operation_refs = vec!["source:operation:constitute-build:ref-update".to_string()];
+    spec.project_refs = vec!["project:constituency:build".to_string()];
+    spec.work_item_refs = vec!["work-item:fabric-transition:build".to_string()];
+    spec.build_run_refs = vec!["build:run:constitute-build:processor".to_string()];
+    spec.build_artifact_refs = vec!["build:artifact:constitute-build:processor".to_string()];
+    spec.build_proof_refs = vec!["build-proof:constitute-build:processor".to_string()];
+    spec.release_candidate_refs = vec!["release:candidate:constitute-build:processor".to_string()];
+    spec.release_ref = Some("release:constitute-build:processor".to_string());
+    spec.rollback_ref = Some("rollback:constitute-build:processor".to_string());
+    spec.access_group_refs = vec!["access-group:build.fabric.default".to_string()];
+    spec.grant_refs = vec!["grant:build:processor".to_string()];
+    spec.materialization_budget_refs = vec!["materialization-budget:build.processor".to_string()];
+    spec.processor_contract_refs = vec!["processor-contract:build.fulfillment".to_string()];
+    spec.processor_role_refs = vec!["role:build.processor".to_string()];
+    spec.processor_report_refs = vec!["event-fabric-report:build.processor".to_string()];
+    spec.retention_refs = vec!["retention:build:processor".to_string()];
+    spec
+}
+
 pub fn current_fabric_transition_service_specs() -> Vec<ManagedServiceSpec> {
     vec![
         service_manager_host_adapter_managed_service_spec(),
         gateway_association_managed_service_spec(),
+        storage_fulfillment_managed_service_spec(),
+        build_processor_managed_service_spec(),
         logging_processor_managed_service_spec(),
         cybersec_processor_managed_service_spec(),
     ]

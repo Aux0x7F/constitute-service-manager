@@ -8,9 +8,10 @@ use constitute_protocol::{
     FABRIC_CONTRACT_TARGET_SELECTED, FABRIC_CONTRACT_TARGET_SLOT_DEGRADED,
     FABRIC_CONTRACT_TARGET_SLOT_MISSING, FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED,
     FABRIC_FULFILLMENT_PLAN_BLOCKED, FABRIC_FULFILLMENT_PLAN_READY,
-    FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_DOMAIN_SERVICE,
-    FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION, FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
-    FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR, SERVICE_MANAGER_OPERATION_RELEASE,
+    FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_BUILD_PROCESSOR,
+    FABRIC_MEMBER_ROLE_DOMAIN_SERVICE, FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION,
+    FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER, FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR,
+    FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE, SERVICE_MANAGER_OPERATION_RELEASE,
     SERVICE_MANAGER_OPERATION_RESTART, SERVICE_MANAGER_OPERATION_ROLLBACK,
     SERVICE_MANAGER_OPERATION_SECRET_READY, SERVICE_MANAGER_OPERATION_START,
     SERVICE_MANAGER_OPERATION_STATE_BLOCKED, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
@@ -1126,9 +1127,9 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
     validate_fabric_transition_fixture(&fixture).expect("fixture validates");
 
     assert_eq!(fixture.family_ref, "branch-family:0x/fabric-transition");
-    assert_eq!(fixture.services.len(), 4);
-    assert_eq!(fixture.outcomes.len(), 4);
-    assert_eq!(fixture.service_hardening_observations.len(), 4);
+    assert_eq!(fixture.services.len(), 6);
+    assert_eq!(fixture.outcomes.len(), 6);
+    assert_eq!(fixture.service_hardening_observations.len(), 6);
     assert_eq!(fixture.transition_state, FABRIC_FULFILLMENT_PLAN_READY);
     assert!(fixture.blocked_reasons.is_empty());
 
@@ -1139,6 +1140,8 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
         .collect::<std::collections::BTreeSet<_>>();
     assert!(service_roles.contains(FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER));
     assert!(service_roles.contains(FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION));
+    assert!(service_roles.contains(FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE));
+    assert!(service_roles.contains(FABRIC_MEMBER_ROLE_BUILD_PROCESSOR));
     assert!(service_roles.contains(FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR));
     assert!(service_roles.contains(FABRIC_MEMBER_ROLE_DOMAIN_SERVICE));
 
@@ -1150,6 +1153,8 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
         .collect::<std::collections::BTreeSet<_>>();
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER)));
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION)));
+    assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE)));
+    assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_BUILD_PROCESSOR)));
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR)));
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_DOMAIN_SERVICE)));
     assert_eq!(
@@ -1157,7 +1162,7 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
             .aggregate_fulfillment_plan
             .member_contribution_refs
             .len(),
-        4
+        6
     );
     assert!(
         fixture
