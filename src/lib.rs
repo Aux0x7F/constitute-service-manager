@@ -1,8 +1,11 @@
 use anyhow::{Result, anyhow};
 use constitute_fabric::{
-    CarrierEdgeCandidate, CarrierEdgeSelectionInput, HostFabricReduction, HostFabricReductionInput,
+    CarrierEdgeCandidate, CarrierEdgeSelectionInput, HostFabricAdapterExecutionInput,
+    HostFabricControlDecisionInput, HostFabricReduction, HostFabricReductionInput,
     HostFabricRoleRequirement, HostFabricShadowParity, HostFabricShadowParityInput,
     reduce_carrier_edge_selection_from_fabric, reduce_host_fabric,
+    reduce_host_fabric_adapter_execution_evidence as reduce_fabric_adapter_execution_evidence,
+    reduce_host_fabric_control_decision as reduce_fabric_control_decision_from_plan,
     reduce_host_fabric_shadow_parity,
 };
 use constitute_protocol::{
@@ -42,24 +45,24 @@ use constitute_protocol::{
     HostFabricLegacyControlBridge, HostFabricMemberContribution, HostFabricTopologyProjection,
     LifecycleDependencyEdge, LifecyclePhasePosture, LifecyclePlanPosture, RECORD_CONTRACT_TARGET,
     RECORD_CONTRACT_TARGET_REGISTRY_POSTURE, RECORD_CYBERSEC_MITIGATION_RECOMMENDATION,
-    RECORD_HOST_FABRIC_ADAPTER_EXECUTION_EVIDENCE, RECORD_HOST_FABRIC_CONTROL_DECISION,
-    RECORD_HOST_FABRIC_FULFILLMENT_PLAN, RECORD_HOST_FABRIC_LEGACY_CONTROL_BRIDGE,
-    RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION, RECORD_LIFECYCLE_DEPENDENCY_EDGE,
-    RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE, RECORD_SERVICE_HARDENING_POSTURE,
-    RECORD_SERVICE_MANAGER_LAB_PROOF, RECORD_SERVICE_MANAGER_OPERATION_POSTURE,
-    RECORD_SERVICE_MANAGER_POSTURE, RECORD_SERVICE_MANAGER_PROOF_DIGEST,
-    RECORD_SERVICE_MANAGER_RELEASE_CONTRACT, RECORD_SERVICE_MANAGER_SECRET_BOUNDARY,
-    RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture, SERVICE_MANAGER_OPERATION_HEALTH_CHECK,
-    SERVICE_MANAGER_OPERATION_INSTALL, SERVICE_MANAGER_OPERATION_PROMOTE,
-    SERVICE_MANAGER_OPERATION_RELEASE, SERVICE_MANAGER_OPERATION_RESTART,
-    SERVICE_MANAGER_OPERATION_ROLLBACK, SERVICE_MANAGER_OPERATION_SECRET_READY,
-    SERVICE_MANAGER_OPERATION_START, SERVICE_MANAGER_OPERATION_STATE_BLOCKED,
-    SERVICE_MANAGER_OPERATION_STATE_FAILED, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
-    SERVICE_MANAGER_OPERATION_STOP, SERVICE_MANAGER_OPERATION_UPDATE,
-    SERVICE_MANAGER_POSTURE_BLOCKED, SERVICE_MANAGER_POSTURE_READY,
-    SERVICE_MANAGER_PROOF_STATE_BLOCKED, SERVICE_MANAGER_PROOF_STATE_FAILED,
-    SERVICE_MANAGER_PROOF_STATE_PROVED, SURFACE_APP_CONTRACT_STATE_READY,
-    SURFACE_SECRET_BOUNDARY_RESOLVED, ServiceHardeningPostureRecord, ServiceManagerLabProofRecord,
+    RECORD_HOST_FABRIC_CONTROL_DECISION, RECORD_HOST_FABRIC_FULFILLMENT_PLAN,
+    RECORD_HOST_FABRIC_LEGACY_CONTROL_BRIDGE, RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION,
+    RECORD_LIFECYCLE_DEPENDENCY_EDGE, RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE,
+    RECORD_SERVICE_HARDENING_POSTURE, RECORD_SERVICE_MANAGER_LAB_PROOF,
+    RECORD_SERVICE_MANAGER_OPERATION_POSTURE, RECORD_SERVICE_MANAGER_POSTURE,
+    RECORD_SERVICE_MANAGER_PROOF_DIGEST, RECORD_SERVICE_MANAGER_RELEASE_CONTRACT,
+    RECORD_SERVICE_MANAGER_SECRET_BOUNDARY, RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture,
+    SERVICE_MANAGER_OPERATION_HEALTH_CHECK, SERVICE_MANAGER_OPERATION_INSTALL,
+    SERVICE_MANAGER_OPERATION_PROMOTE, SERVICE_MANAGER_OPERATION_RELEASE,
+    SERVICE_MANAGER_OPERATION_RESTART, SERVICE_MANAGER_OPERATION_ROLLBACK,
+    SERVICE_MANAGER_OPERATION_SECRET_READY, SERVICE_MANAGER_OPERATION_START,
+    SERVICE_MANAGER_OPERATION_STATE_BLOCKED, SERVICE_MANAGER_OPERATION_STATE_FAILED,
+    SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED, SERVICE_MANAGER_OPERATION_STOP,
+    SERVICE_MANAGER_OPERATION_UPDATE, SERVICE_MANAGER_POSTURE_BLOCKED,
+    SERVICE_MANAGER_POSTURE_READY, SERVICE_MANAGER_PROOF_STATE_BLOCKED,
+    SERVICE_MANAGER_PROOF_STATE_FAILED, SERVICE_MANAGER_PROOF_STATE_PROVED,
+    SURFACE_APP_CONTRACT_STATE_READY, SURFACE_SECRET_BOUNDARY_RESOLVED,
+    ServiceHardeningPostureRecord, ServiceManagerLabProofRecord,
     ServiceManagerOperationPostureRecord, ServiceManagerPostureRecord,
     ServiceManagerProofDigestRecord, ServiceManagerReleaseContractRecord,
     ServiceManagerSecretBoundaryRecord, ServiceManagerTrainDigestRecord,
@@ -3338,9 +3341,11 @@ fn reduce_fabric_control_decision(
                 "delegation:service-manager:{}:{}",
                 request.service_id, request.operation
             )),
+            authorization_refs: vec![],
             fallback_refs: vec!["fallback:service-manager:legacy-control".to_string()],
             quarantine_refs,
             rollback_ref: Some(format!("rollback:service-manager:{}", request.service_id)),
+            release_refs: vec![],
             blocked_reasons,
             evidence_refs,
             safe_facts: json!({
@@ -3425,25 +3430,44 @@ fn reduce_fabric_control_decision(
     }
     blocked_reasons.sort();
     blocked_reasons.dedup();
-    let state = if blocked_reasons.is_empty() {
-        FABRIC_CONTROL_DECISION_READY
-    } else if plan.state == FABRIC_FULFILLMENT_PLAN_DEGRADED {
-        FABRIC_CONTROL_DECISION_DEGRADED
-    } else {
-        FABRIC_CONTROL_DECISION_BLOCKED
-    };
     let mut evidence_refs = plan.evidence_refs.clone();
     evidence_refs.push(format!("evidence:fabric-control:{}", plan.plan_id));
     evidence_refs.sort();
     evidence_refs.dedup();
-    let decision = base_decision(
-        state,
-        Some(role_ref),
-        Some(plan.plan_id.clone()),
-        Some(plan.state.clone()),
-        blocked_reasons,
-        evidence_refs,
-    );
+    let decision = reduce_fabric_control_decision_from_plan(
+        plan,
+        HostFabricControlDecisionInput {
+            decision_id: format!(
+                "hostFabric:controlDecision:{}:{}:{}",
+                request.service_id, request.operation, request.requested_at
+            ),
+            operation_ref,
+            subject_ref: request.service_id.clone(),
+            control_owner_ref: Some(spec.fabric_ref.clone()),
+            delegated_role_ref: Some(role_ref.clone()),
+            execution_delegation_ref: Some(format!(
+                "delegation:service-manager:{}:{}",
+                request.service_id, request.operation
+            )),
+            authorization_refs: vec![],
+            fallback_refs: vec!["fallback:service-manager:legacy-control".to_string()],
+            quarantine_refs: vec![format!(
+                "quarantine:service-manager:legacy-control:{}",
+                role_ref
+            )],
+            rollback_ref: Some(format!("rollback:service-manager:{}", request.service_id)),
+            release_refs: spec.release_ref.clone().into_iter().collect(),
+            evidence_refs,
+            blocked_reasons,
+            safe_facts: json!({
+                "controlMode": "fabricPreflightLegacyFallback",
+                "operation": request.operation,
+                "dryRun": request.dry_run,
+            }),
+            observed_at: request.requested_at,
+            expires_at: Some(request.requested_at + 300),
+        },
+    )?;
     validate_host_fabric_control_decision(&decision)?;
     Ok(decision)
 }
@@ -3556,40 +3580,42 @@ fn build_host_fabric_adapter_execution_evidence(
     input_refs.extend(plan.member_contribution_refs.clone());
     input_refs.sort();
     input_refs.dedup();
-    let evidence = HostFabricAdapterExecutionEvidence {
-        kind: Some(RECORD_HOST_FABRIC_ADAPTER_EXECUTION_EVIDENCE.to_string()),
-        evidence_id: format!(
-            "hostFabric:adapterExecution:{}:{}:{}",
-            request.service_id, request.operation, request.requested_at
-        ),
-        fabric_ref: spec.fabric_ref.clone(),
-        host_ref: spec.host_ref.clone().unwrap_or_default(),
-        adapter_ref: spec.host_adapter_ref.clone(),
-        subject_ref: request.service_id.clone(),
-        operation_ref: decision.operation_ref.clone(),
-        state: state.to_string(),
-        source_decision_ref: Some(decision.decision_id.clone()),
-        source_plan_ref: Some(plan.plan_id.clone()),
-        source_bridge_ref: Some(bridge.bridge_id.clone()),
-        delegated_role_ref: decision.delegated_role_ref.clone(),
-        action_authority_refs: plan.action_authority_refs.clone(),
-        evidence_requirement_refs: plan.evidence_requirement_refs.clone(),
-        input_refs,
-        output_refs,
-        fallback_refs: decision.fallback_refs.clone(),
-        quarantine_refs: decision.quarantine_refs.clone(),
-        rollback_refs: plan.rollback_refs.clone(),
-        blocked_reasons,
-        evidence_refs,
-        safe_facts: json!({
-            "operation": request.operation,
-            "dryRun": request.dry_run,
-            "decisionState": decision.state,
-            "legacyBridgeState": bridge.state,
-        }),
-        observed_at,
-        expires_at: Some(observed_at + 300),
-    };
+    let evidence = reduce_fabric_adapter_execution_evidence(
+        plan,
+        decision,
+        HostFabricAdapterExecutionInput {
+            evidence_id: format!(
+                "hostFabric:adapterExecution:{}:{}:{}",
+                request.service_id, request.operation, request.requested_at
+            ),
+            adapter_ref: spec.host_adapter_ref.clone(),
+            state: state.to_string(),
+            source_bridge_ref: Some(bridge.bridge_id.clone()),
+            delegated_role_ref: decision.delegated_role_ref.clone(),
+            action_authority_refs: plan.action_authority_refs.clone(),
+            evidence_requirement_refs: plan.evidence_requirement_refs.clone(),
+            input_refs,
+            output_refs,
+            fallback_refs: decision.fallback_refs.clone(),
+            quarantine_refs: decision.quarantine_refs.clone(),
+            rollback_refs: plan.rollback_refs.clone(),
+            release_refs: decision.release_refs.clone(),
+            cleanup_refs: vec![format!(
+                "cleanup:service-manager:{}:{}",
+                request.service_id, request.operation
+            )],
+            blocked_reasons,
+            evidence_refs,
+            safe_facts: json!({
+                "operation": request.operation,
+                "dryRun": request.dry_run,
+                "decisionState": decision.state,
+                "legacyBridgeState": bridge.state,
+            }),
+            observed_at,
+            expires_at: Some(observed_at + 300),
+        },
+    )?;
     validate_host_fabric_adapter_execution_evidence(&evidence)?;
     Ok(evidence)
 }

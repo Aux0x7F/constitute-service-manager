@@ -947,9 +947,21 @@ fn fabric_control_role_allows_operation_when_latest_plan_is_ready() {
     );
     assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED);
     assert_eq!(outcome.fabric_control_decision.state, "ready");
+    assert!(
+        !outcome
+            .fabric_control_decision
+            .authorization_refs
+            .is_empty()
+    );
     assert_eq!(
         outcome.host_fabric_adapter_execution_evidence.state,
         FABRIC_ADAPTER_EXECUTION_SUCCEEDED
+    );
+    assert_eq!(
+        outcome
+            .host_fabric_adapter_execution_evidence
+            .authorization_refs,
+        outcome.fabric_control_decision.authorization_refs
     );
     assert_eq!(
         outcome
@@ -984,6 +996,15 @@ fn fabric_control_role_allows_operation_when_latest_plan_is_ready() {
     assert_eq!(
         outcome.fabric_control_decision.source_plan_ref.as_deref(),
         Some(warmup.host_fabric_fulfillment_plan.plan_id.as_str())
+    );
+    assert!(
+        outcome
+            .host_fabric_adapter_execution_evidence
+            .cleanup_refs
+            .contains(&format!(
+                "cleanup:service-manager:{}:{}",
+                outcome.service_id, outcome.operation
+            ))
     );
 }
 
