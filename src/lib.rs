@@ -18,8 +18,10 @@ use constitute_protocol::{
     FABRIC_CONTROL_DECISION_DEGRADED, FABRIC_CONTROL_DECISION_NOT_REQUESTED,
     FABRIC_CONTROL_DECISION_READY, FABRIC_CONTROL_DECISION_WAITING_PLAN,
     FABRIC_FULFILLMENT_PLAN_BLOCKED, FABRIC_FULFILLMENT_PLAN_DEGRADED,
-    FABRIC_FULFILLMENT_PLAN_READY, FABRIC_LIFECYCLE_PHASE_BLOCKED, FABRIC_LIFECYCLE_PHASE_BUILD,
-    FABRIC_LIFECYCLE_PHASE_CLEANUP, FABRIC_LIFECYCLE_PHASE_LOAD,
+    FABRIC_FULFILLMENT_PLAN_READY, FABRIC_LEGACY_CONTROL_BLOCKED,
+    FABRIC_LEGACY_CONTROL_FALLBACK_AVAILABLE, FABRIC_LEGACY_CONTROL_LEGACY_DIRECT,
+    FABRIC_LEGACY_CONTROL_QUARANTINED, FABRIC_LIFECYCLE_PHASE_BLOCKED,
+    FABRIC_LIFECYCLE_PHASE_BUILD, FABRIC_LIFECYCLE_PHASE_CLEANUP, FABRIC_LIFECYCLE_PHASE_LOAD,
     FABRIC_LIFECYCLE_PHASE_NOT_REQUIRED, FABRIC_LIFECYCLE_PHASE_OBSERVE,
     FABRIC_LIFECYCLE_PHASE_READY, FABRIC_LIFECYCLE_PHASE_RELEASE, FABRIC_LIFECYCLE_PHASE_ROLLBACK,
     FABRIC_LIFECYCLE_PHASE_RUN, FABRIC_LIFECYCLE_PHASE_RUNNING, FABRIC_LIFECYCLE_PHASE_SOURCE,
@@ -28,10 +30,11 @@ use constitute_protocol::{
     FABRIC_MEMBER_ROLE_BUILD_PROCESSOR, FABRIC_MEMBER_ROLE_DOMAIN_SERVICE,
     FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION, FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
     FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR, FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE,
-    HostFabricControlDecision, HostFabricFulfillmentPlan, HostFabricMemberContribution,
-    LifecyclePhasePosture, LifecyclePlanPosture, RECORD_CONTRACT_TARGET,
-    RECORD_CONTRACT_TARGET_REGISTRY_POSTURE, RECORD_CYBERSEC_MITIGATION_RECOMMENDATION,
-    RECORD_HOST_FABRIC_CONTROL_DECISION, RECORD_HOST_FABRIC_FULFILLMENT_PLAN,
+    HostFabricControlDecision, HostFabricFulfillmentPlan, HostFabricLegacyControlBridge,
+    HostFabricMemberContribution, LifecyclePhasePosture, LifecyclePlanPosture,
+    RECORD_CONTRACT_TARGET, RECORD_CONTRACT_TARGET_REGISTRY_POSTURE,
+    RECORD_CYBERSEC_MITIGATION_RECOMMENDATION, RECORD_HOST_FABRIC_CONTROL_DECISION,
+    RECORD_HOST_FABRIC_FULFILLMENT_PLAN, RECORD_HOST_FABRIC_LEGACY_CONTROL_BRIDGE,
     RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION, RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE,
     RECORD_SERVICE_HARDENING_POSTURE, RECORD_SERVICE_MANAGER_LAB_PROOF,
     RECORD_SERVICE_MANAGER_OPERATION_POSTURE, RECORD_SERVICE_MANAGER_POSTURE,
@@ -53,12 +56,12 @@ use constitute_protocol::{
     ServiceManagerSecretBoundaryRecord, ServiceManagerTrainDigestRecord, validate_contract_target,
     validate_contract_target_registry_posture, validate_cybersec_mitigation_consumer_posture,
     validate_cybersec_mitigation_recommendation, validate_host_fabric_control_decision,
-    validate_host_fabric_fulfillment_plan, validate_host_fabric_member_contribution,
-    validate_lifecycle_plan_posture, validate_service_hardening_posture,
-    validate_service_manager_lab_proof, validate_service_manager_operation_posture,
-    validate_service_manager_posture, validate_service_manager_proof_digest,
-    validate_service_manager_release_contract, validate_service_manager_secret_boundary,
-    validate_service_manager_train_digest,
+    validate_host_fabric_fulfillment_plan, validate_host_fabric_legacy_control_bridge,
+    validate_host_fabric_member_contribution, validate_lifecycle_plan_posture,
+    validate_service_hardening_posture, validate_service_manager_lab_proof,
+    validate_service_manager_operation_posture, validate_service_manager_posture,
+    validate_service_manager_proof_digest, validate_service_manager_release_contract,
+    validate_service_manager_secret_boundary, validate_service_manager_train_digest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -226,6 +229,8 @@ pub struct ServiceManagerState {
     #[serde(default)]
     pub host_fabric_fulfillment_plans: Vec<HostFabricFulfillmentPlan>,
     #[serde(default)]
+    pub host_fabric_legacy_control_bridges: Vec<HostFabricLegacyControlBridge>,
+    #[serde(default)]
     pub service_hardening_postures: Vec<ServiceHardeningPostureRecord>,
     pub posture: Option<ServiceManagerPostureRecord>,
     pub updated_at: u64,
@@ -258,6 +263,7 @@ pub struct ServiceOperationOutcome {
     pub host_fabric_contribution: Option<HostFabricMemberContribution>,
     pub lifecycle_plan: LifecyclePlanPosture,
     pub host_fabric_fulfillment_plan: HostFabricFulfillmentPlan,
+    pub host_fabric_legacy_control_bridge: HostFabricLegacyControlBridge,
     pub service_hardening_posture: ServiceHardeningPostureRecord,
     pub fabric_control_decision: HostFabricControlDecision,
     pub posture: ServiceManagerPostureRecord,
@@ -545,6 +551,7 @@ pub fn default_manager_state(issued_at: u64) -> ServiceManagerState {
         host_fabric_contributions: vec![],
         lifecycle_plans: vec![],
         host_fabric_fulfillment_plans: vec![],
+        host_fabric_legacy_control_bridges: vec![],
         service_hardening_postures: vec![],
         posture: None,
         updated_at: issued_at,
@@ -2719,6 +2726,8 @@ pub fn apply_service_operation(
         .clone();
     validate_supported_operation(&request.operation)?;
     let fabric_control_decision = reduce_fabric_control_decision(state, &spec, &request)?;
+    let host_fabric_legacy_control_bridge =
+        build_host_fabric_legacy_control_bridge(&spec, &request, &fabric_control_decision)?;
     let mut blocked_reasons = operation_blocked_reasons(&spec, &request);
     blocked_reasons.extend(fabric_control_decision.blocked_reasons.clone());
     blocked_reasons.sort();
@@ -2813,6 +2822,9 @@ pub fn apply_service_operation(
         .host_fabric_fulfillment_plans
         .push(host_fabric_fulfillment_plan.clone());
     state
+        .host_fabric_legacy_control_bridges
+        .push(host_fabric_legacy_control_bridge.clone());
+    state
         .service_hardening_postures
         .push(service_hardening_posture.clone());
     state.updated_at = request.requested_at + 115;
@@ -2832,6 +2844,7 @@ pub fn apply_service_operation(
         host_fabric_contribution,
         lifecycle_plan,
         host_fabric_fulfillment_plan,
+        host_fabric_legacy_control_bridge,
         service_hardening_posture,
         fabric_control_decision,
         posture,
@@ -3067,6 +3080,65 @@ fn reduce_fabric_control_decision(
     );
     validate_host_fabric_control_decision(&decision)?;
     Ok(decision)
+}
+
+fn build_host_fabric_legacy_control_bridge(
+    spec: &ManagedServiceSpec,
+    request: &ServiceOperationRequest,
+    decision: &HostFabricControlDecision,
+) -> Result<HostFabricLegacyControlBridge> {
+    let state = if request.fabric_control_role.is_none() {
+        FABRIC_LEGACY_CONTROL_LEGACY_DIRECT
+    } else if decision.state == FABRIC_CONTROL_DECISION_READY {
+        FABRIC_LEGACY_CONTROL_FALLBACK_AVAILABLE
+    } else if matches!(
+        decision.state.as_str(),
+        FABRIC_CONTROL_DECISION_WAITING_PLAN | FABRIC_CONTROL_DECISION_DEGRADED
+    ) {
+        FABRIC_LEGACY_CONTROL_QUARANTINED
+    } else {
+        FABRIC_LEGACY_CONTROL_BLOCKED
+    };
+    let mut evidence_refs = decision.evidence_refs.clone();
+    evidence_refs.push(format!("evidence:legacy-control:{}", decision.decision_id));
+    evidence_refs.sort();
+    evidence_refs.dedup();
+    let bridge = HostFabricLegacyControlBridge {
+        kind: Some(RECORD_HOST_FABRIC_LEGACY_CONTROL_BRIDGE.to_string()),
+        bridge_id: format!(
+            "hostFabric:legacyControlBridge:{}:{}:{}",
+            request.service_id, request.operation, request.requested_at
+        ),
+        fabric_ref: spec.fabric_ref.clone(),
+        host_ref: spec.host_ref.clone().unwrap_or_default(),
+        legacy_owner_ref: spec.manager_ref.clone(),
+        subject_ref: request.service_id.clone(),
+        operation_ref: decision.operation_ref.clone(),
+        state: state.to_string(),
+        source_decision_ref: if request.fabric_control_role.is_some() {
+            Some(decision.decision_id.clone())
+        } else {
+            None
+        },
+        delegated_role_ref: decision.delegated_role_ref.clone(),
+        fallback_refs: decision.fallback_refs.clone(),
+        quarantine_refs: decision.quarantine_refs.clone(),
+        blocked_reasons: if state == FABRIC_LEGACY_CONTROL_BLOCKED {
+            decision.blocked_reasons.clone()
+        } else {
+            vec![]
+        },
+        evidence_refs,
+        safe_facts: json!({
+            "controlMode": decision.safe_facts.get("controlMode").cloned().unwrap_or(Value::Null),
+            "operation": request.operation,
+            "fabricControlRequested": request.fabric_control_role.is_some(),
+        }),
+        observed_at: decision.observed_at,
+        expires_at: decision.expires_at,
+    };
+    validate_host_fabric_legacy_control_bridge(&bridge)?;
+    Ok(bridge)
 }
 
 fn fabric_role_ref(role: &str) -> String {
@@ -3360,6 +3432,7 @@ pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixtu
         host_fabric_contributions: vec![],
         lifecycle_plans: vec![],
         host_fabric_fulfillment_plans: vec![],
+        host_fabric_legacy_control_bridges: vec![],
         service_hardening_postures: vec![],
         posture: None,
         updated_at: issued_at,
@@ -3614,6 +3687,7 @@ pub fn validate_fabric_transition_fixture(fixture: &FabricTransitionFixture) -> 
         }
         validate_lifecycle_plan_posture(&outcome.lifecycle_plan)?;
         validate_host_fabric_fulfillment_plan(&outcome.host_fabric_fulfillment_plan)?;
+        validate_host_fabric_legacy_control_bridge(&outcome.host_fabric_legacy_control_bridge)?;
         validate_service_hardening_posture(&outcome.service_hardening_posture)?;
         validate_service_manager_posture(&outcome.posture)?;
     }

@@ -7,7 +7,8 @@ use constitute_protocol::{
     FABRIC_CONTRACT_TARGET_COMPATIBILITY_DEGRADED, FABRIC_CONTRACT_TARGET_REGISTRY_DEGRADED,
     FABRIC_CONTRACT_TARGET_SELECTED, FABRIC_CONTRACT_TARGET_SLOT_DEGRADED,
     FABRIC_CONTRACT_TARGET_SLOT_MISSING, FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED,
-    FABRIC_FULFILLMENT_PLAN_BLOCKED, FABRIC_FULFILLMENT_PLAN_READY,
+    FABRIC_FULFILLMENT_PLAN_BLOCKED, FABRIC_FULFILLMENT_PLAN_READY, FABRIC_LEGACY_CONTROL_BLOCKED,
+    FABRIC_LEGACY_CONTROL_FALLBACK_AVAILABLE, FABRIC_LEGACY_CONTROL_LEGACY_DIRECT,
     FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_BUILD_PROCESSOR,
     FABRIC_MEMBER_ROLE_DOMAIN_SERVICE, FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION,
     FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER, FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR,
@@ -18,9 +19,10 @@ use constitute_protocol::{
     SERVICE_MANAGER_POSTURE_BLOCKED, SERVICE_MANAGER_POSTURE_READY,
     SERVICE_MANAGER_PROOF_STATE_BLOCKED, SURFACE_SECRET_BOUNDARY_BLOCKED, validate_contract_target,
     validate_contract_target_registry_posture, validate_cybersec_mitigation_consumer_posture,
-    validate_host_fabric_fulfillment_plan, validate_host_fabric_member_contribution,
-    validate_lifecycle_plan_posture, validate_service_hardening_posture,
-    validate_service_manager_lab_proof, validate_service_manager_operation_posture,
+    validate_host_fabric_fulfillment_plan, validate_host_fabric_legacy_control_bridge,
+    validate_host_fabric_member_contribution, validate_lifecycle_plan_posture,
+    validate_service_hardening_posture, validate_service_manager_lab_proof,
+    validate_service_manager_operation_posture,
 };
 use constitute_service_manager::{
     ServiceOperationRequest, apply_service_operation, blocked_operation_fixture,
@@ -1134,6 +1136,9 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
     assert!(fixture.blocked_reasons.is_empty());
     assert!(fixture.shadow_parity.disagreement_role_refs.is_empty());
     assert!(fixture.shadow_parity.blocked_reasons.is_empty());
+    assert!(fixture.outcomes.iter().all(|outcome| {
+        outcome.host_fabric_legacy_control_bridge.state == FABRIC_LEGACY_CONTROL_LEGACY_DIRECT
+    }));
 
     let service_roles = fixture
         .services
@@ -1295,6 +1300,32 @@ fn cli_run_and_status_roundtrip_state_file() {
         vec!["quarantine:service-manager:legacy-control:role:hostServiceAdapter".to_string()]
     );
     assert_eq!(
+        controlled_outcome.host_fabric_legacy_control_bridge.state,
+        FABRIC_LEGACY_CONTROL_FALLBACK_AVAILABLE
+    );
+    assert_eq!(
+        controlled_outcome
+            .host_fabric_legacy_control_bridge
+            .source_decision_ref
+            .as_deref(),
+        Some(
+            controlled_outcome
+                .fabric_control_decision
+                .decision_id
+                .as_str()
+        )
+    );
+    assert_eq!(
+        controlled_outcome
+            .host_fabric_legacy_control_bridge
+            .quarantine_refs,
+        controlled_outcome.fabric_control_decision.quarantine_refs
+    );
+    validate_host_fabric_legacy_control_bridge(
+        &controlled_outcome.host_fabric_legacy_control_bridge,
+    )
+    .expect("legacy bridge validates");
+    assert_eq!(
         controlled_outcome.state,
         SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED
     );
@@ -1340,6 +1371,10 @@ fn fabric_control_blocks_expired_plan_before_adapter_execution() {
     .expect("expired control outcome");
 
     assert_eq!(outcome.fabric_control_decision.state, "blocked");
+    assert_eq!(
+        outcome.host_fabric_legacy_control_bridge.state,
+        FABRIC_LEGACY_CONTROL_BLOCKED
+    );
     assert!(
         outcome
             .fabric_control_decision
@@ -1380,6 +1415,10 @@ fn fabric_control_covers_rollback_and_missing_authority_posture() {
     .expect("rollback control");
     assert_eq!(rollback.fabric_control_decision.state, "ready");
     assert_eq!(
+        rollback.host_fabric_legacy_control_bridge.state,
+        FABRIC_LEGACY_CONTROL_FALLBACK_AVAILABLE
+    );
+    assert_eq!(
         rollback.fabric_control_decision.rollback_ref.as_deref(),
         Some("rollback:service-manager:lab-service")
     );
@@ -1401,6 +1440,10 @@ fn fabric_control_covers_rollback_and_missing_authority_posture() {
     .expect("missing authority control");
 
     assert_eq!(blocked.fabric_control_decision.state, "blocked");
+    assert_eq!(
+        blocked.host_fabric_legacy_control_bridge.state,
+        FABRIC_LEGACY_CONTROL_BLOCKED
+    );
     assert!(
         blocked
             .fabric_control_decision
