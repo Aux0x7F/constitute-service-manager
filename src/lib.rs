@@ -3336,6 +3336,8 @@ fn reduce_fabric_control_decision(
             delegated_role_ref,
             state: state.to_string(),
             source_plan_ref,
+            source_plan_observed_at: None,
+            source_plan_expires_at: None,
             plan_state,
             execution_delegation_ref: Some(format!(
                 "delegation:service-manager:{}:{}",
