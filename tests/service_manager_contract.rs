@@ -20,9 +20,9 @@ use constitute_protocol::{
     SERVICE_MANAGER_PROOF_STATE_BLOCKED, SURFACE_SECRET_BOUNDARY_BLOCKED, validate_contract_target,
     validate_contract_target_registry_posture, validate_cybersec_mitigation_consumer_posture,
     validate_host_fabric_fulfillment_plan, validate_host_fabric_legacy_control_bridge,
-    validate_host_fabric_member_contribution, validate_lifecycle_plan_posture,
-    validate_service_hardening_posture, validate_service_manager_lab_proof,
-    validate_service_manager_operation_posture,
+    validate_host_fabric_member_contribution, validate_host_fabric_topology_projection,
+    validate_lifecycle_plan_posture, validate_service_hardening_posture,
+    validate_service_manager_lab_proof, validate_service_manager_operation_posture,
 };
 use constitute_service_manager::{
     ServiceOperationRequest, apply_service_operation, blocked_operation_fixture,
@@ -53,6 +53,7 @@ fn lifecycle_fixture_covers_manager_operations() {
     assert_eq!(fixture.host_fabric_contributions.len(), 1);
     assert_eq!(fixture.lifecycle_plans.len(), 1);
     assert_eq!(fixture.host_fabric_fulfillment_plans.len(), 1);
+    assert_eq!(fixture.host_fabric_topology_projections.len(), 1);
     assert_eq!(fixture.service_hardening_postures.len(), 1);
     assert_eq!(fixture.posture.state, SERVICE_MANAGER_POSTURE_READY);
     assert_eq!(
@@ -67,6 +68,8 @@ fn lifecycle_fixture_covers_manager_operations() {
     validate_lifecycle_plan_posture(&fixture.lifecycle_plans[0]).expect("lifecycle plan validates");
     validate_host_fabric_fulfillment_plan(&fixture.host_fabric_fulfillment_plans[0])
         .expect("fulfillment plan validates");
+    validate_host_fabric_topology_projection(&fixture.host_fabric_topology_projections[0])
+        .expect("topology projection validates");
     validate_service_hardening_posture(&fixture.service_hardening_postures[0])
         .expect("service hardening posture validates");
     assert_eq!(
@@ -76,6 +79,10 @@ fn lifecycle_fixture_covers_manager_operations() {
     assert_eq!(
         fixture.host_fabric_fulfillment_plans[0].state,
         constitute_protocol::FABRIC_FULFILLMENT_PLAN_READY
+    );
+    assert_eq!(
+        fixture.host_fabric_topology_projections[0].source_plan_ref,
+        fixture.host_fabric_fulfillment_plans[0].plan_id
     );
     assert_eq!(
         fixture.contract_targets[0].state,
@@ -535,6 +542,7 @@ fn protected_posture_blocks_missing_lifecycle_proof() {
             host_fabric_contributions: vec![],
             lifecycle_plans: vec![],
             host_fabric_fulfillment_plans: vec![],
+            host_fabric_topology_projections: vec![],
             service_hardening_postures: vec![],
             posture,
         },
@@ -705,6 +713,14 @@ fn cli_emits_valid_fabric_transition_fixture() {
     let fixture: constitute_service_manager::FabricTransitionFixture =
         serde_json::from_slice(&output.stdout).expect("fixture json");
     assert_eq!(fixture.transition_state, FABRIC_FULFILLMENT_PLAN_READY);
+    assert_eq!(
+        fixture.aggregate_topology_projection.source_plan_ref,
+        fixture.aggregate_fulfillment_plan.plan_id
+    );
+    assert_eq!(
+        fixture.aggregate_topology_projection.role_postures.len(),
+        fixture.services.len()
+    );
     validate_fabric_transition_fixture(&fixture).expect("fixture validates");
 }
 
@@ -732,6 +748,7 @@ fn dry_run_operation_persists_state_and_reduces_posture() {
     assert_eq!(state.host_fabric_contributions.len(), 1);
     assert_eq!(state.lifecycle_plans.len(), 1);
     assert_eq!(state.host_fabric_fulfillment_plans.len(), 1);
+    assert_eq!(state.host_fabric_topology_projections.len(), 1);
     assert_eq!(state.service_hardening_postures.len(), 1);
     assert_eq!(outcome.posture.state, SERVICE_MANAGER_POSTURE_READY);
     assert!(outcome.host_fabric_contribution.is_some());
@@ -742,6 +759,10 @@ fn dry_run_operation_persists_state_and_reduces_posture() {
     assert_eq!(
         outcome.host_fabric_fulfillment_plan.state,
         constitute_protocol::FABRIC_FULFILLMENT_PLAN_READY
+    );
+    assert_eq!(
+        outcome.host_fabric_topology_projection.source_plan_ref,
+        outcome.host_fabric_fulfillment_plan.plan_id
     );
     assert_eq!(
         outcome.contract_target.state,

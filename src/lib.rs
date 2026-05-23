@@ -1,7 +1,8 @@
 use anyhow::{Result, anyhow};
 use constitute_fabric::{
-    HostFabricReductionInput, HostFabricRoleRequirement, HostFabricShadowParity,
-    HostFabricShadowParityInput, reduce_host_fabric, reduce_host_fabric_shadow_parity,
+    HostFabricReduction, HostFabricReductionInput, HostFabricRoleRequirement,
+    HostFabricShadowParity, HostFabricShadowParityInput, reduce_host_fabric,
+    reduce_host_fabric_shadow_parity,
 };
 use constitute_protocol::{
     ContractTarget, ContractTargetRegistryPosture, ContractTargetSlotPosture,
@@ -31,8 +32,8 @@ use constitute_protocol::{
     FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION, FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
     FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR, FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE,
     HostFabricControlDecision, HostFabricFulfillmentPlan, HostFabricLegacyControlBridge,
-    HostFabricMemberContribution, LifecyclePhasePosture, LifecyclePlanPosture,
-    RECORD_CONTRACT_TARGET, RECORD_CONTRACT_TARGET_REGISTRY_POSTURE,
+    HostFabricMemberContribution, HostFabricTopologyProjection, LifecyclePhasePosture,
+    LifecyclePlanPosture, RECORD_CONTRACT_TARGET, RECORD_CONTRACT_TARGET_REGISTRY_POSTURE,
     RECORD_CYBERSEC_MITIGATION_RECOMMENDATION, RECORD_HOST_FABRIC_CONTROL_DECISION,
     RECORD_HOST_FABRIC_FULFILLMENT_PLAN, RECORD_HOST_FABRIC_LEGACY_CONTROL_BRIDGE,
     RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION, RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE,
@@ -57,11 +58,12 @@ use constitute_protocol::{
     validate_contract_target_registry_posture, validate_cybersec_mitigation_consumer_posture,
     validate_cybersec_mitigation_recommendation, validate_host_fabric_control_decision,
     validate_host_fabric_fulfillment_plan, validate_host_fabric_legacy_control_bridge,
-    validate_host_fabric_member_contribution, validate_lifecycle_plan_posture,
-    validate_service_hardening_posture, validate_service_manager_lab_proof,
-    validate_service_manager_operation_posture, validate_service_manager_posture,
-    validate_service_manager_proof_digest, validate_service_manager_release_contract,
-    validate_service_manager_secret_boundary, validate_service_manager_train_digest,
+    validate_host_fabric_member_contribution, validate_host_fabric_topology_projection,
+    validate_lifecycle_plan_posture, validate_service_hardening_posture,
+    validate_service_manager_lab_proof, validate_service_manager_operation_posture,
+    validate_service_manager_posture, validate_service_manager_proof_digest,
+    validate_service_manager_release_contract, validate_service_manager_secret_boundary,
+    validate_service_manager_train_digest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -98,6 +100,7 @@ pub struct ServiceManagerLifecycleFixture {
     pub host_fabric_contributions: Vec<HostFabricMemberContribution>,
     pub lifecycle_plans: Vec<LifecyclePlanPosture>,
     pub host_fabric_fulfillment_plans: Vec<HostFabricFulfillmentPlan>,
+    pub host_fabric_topology_projections: Vec<HostFabricTopologyProjection>,
     pub service_hardening_postures: Vec<ServiceHardeningPostureRecord>,
     pub posture: ServiceManagerPostureRecord,
 }
@@ -121,6 +124,7 @@ pub struct FabricTransitionFixture {
     pub outcomes: Vec<ServiceOperationOutcome>,
     pub service_hardening_observations: Vec<ServiceManagerHardeningObservation>,
     pub aggregate_fulfillment_plan: HostFabricFulfillmentPlan,
+    pub aggregate_topology_projection: HostFabricTopologyProjection,
     pub shadow_parity: HostFabricShadowParity,
     pub transition_state: String,
     #[serde(default)]
@@ -229,6 +233,8 @@ pub struct ServiceManagerState {
     #[serde(default)]
     pub host_fabric_fulfillment_plans: Vec<HostFabricFulfillmentPlan>,
     #[serde(default)]
+    pub host_fabric_topology_projections: Vec<HostFabricTopologyProjection>,
+    #[serde(default)]
     pub host_fabric_legacy_control_bridges: Vec<HostFabricLegacyControlBridge>,
     #[serde(default)]
     pub service_hardening_postures: Vec<ServiceHardeningPostureRecord>,
@@ -263,6 +269,7 @@ pub struct ServiceOperationOutcome {
     pub host_fabric_contribution: Option<HostFabricMemberContribution>,
     pub lifecycle_plan: LifecyclePlanPosture,
     pub host_fabric_fulfillment_plan: HostFabricFulfillmentPlan,
+    pub host_fabric_topology_projection: HostFabricTopologyProjection,
     pub host_fabric_legacy_control_bridge: HostFabricLegacyControlBridge,
     pub service_hardening_posture: ServiceHardeningPostureRecord,
     pub fabric_control_decision: HostFabricControlDecision,
@@ -551,6 +558,7 @@ pub fn default_manager_state(issued_at: u64) -> ServiceManagerState {
         host_fabric_contributions: vec![],
         lifecycle_plans: vec![],
         host_fabric_fulfillment_plans: vec![],
+        host_fabric_topology_projections: vec![],
         host_fabric_legacy_control_bridges: vec![],
         service_hardening_postures: vec![],
         posture: None,
@@ -2063,6 +2071,27 @@ pub fn reduce_host_fabric_fulfillment_plan_for_spec(
     blocked_reasons: Vec<String>,
     target_registry_posture: Option<&ContractTargetRegistryPosture>,
 ) -> Result<HostFabricFulfillmentPlan> {
+    Ok(reduce_host_fabric_for_spec(
+        spec,
+        operation,
+        host_fabric_contributions,
+        lifecycle_plans,
+        observed_at,
+        blocked_reasons,
+        target_registry_posture,
+    )?
+    .fulfillment_plan)
+}
+
+pub fn reduce_host_fabric_for_spec(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+    host_fabric_contributions: &[HostFabricMemberContribution],
+    lifecycle_plans: &[LifecyclePlanPosture],
+    observed_at: u64,
+    blocked_reasons: Vec<String>,
+    target_registry_posture: Option<&ContractTargetRegistryPosture>,
+) -> Result<HostFabricReduction> {
     let mut blocked_reasons = blocked_reasons;
     blocked_reasons.extend(host_fabric_contract_blockers(spec));
     if let Some(registry) = target_registry_posture {
@@ -2081,7 +2110,7 @@ pub fn reduce_host_fabric_fulfillment_plan_for_spec(
     if let Some(registry) = target_registry_posture {
         evidence_refs.push(registry.registry_ref.clone());
     }
-    let reduction = reduce_host_fabric(HostFabricReductionInput {
+    reduce_host_fabric(HostFabricReductionInput {
         plan_id: host_fabric_fulfillment_plan_id(spec, operation),
         fabric_ref: spec.fabric_ref.clone(),
         host_ref: spec.host_ref.clone().unwrap_or_default(),
@@ -2099,8 +2128,7 @@ pub fn reduce_host_fabric_fulfillment_plan_for_spec(
         association_handoff_ref: spec.association_handoff_ref.clone(),
         observed_at,
         expires_at: Some(observed_at + 3600),
-    })?;
-    Ok(reduction.fulfillment_plan)
+    })
 }
 
 pub fn build_service_hardening_posture_for_spec(
@@ -2809,7 +2837,7 @@ pub fn apply_service_operation(
         .clone()
         .into_iter()
         .collect::<Vec<_>>();
-    let host_fabric_fulfillment_plan = reduce_host_fabric_fulfillment_plan_for_spec(
+    let host_fabric_reduction = reduce_host_fabric_for_spec(
         &spec,
         &operation_posture,
         &host_fabric_contributions,
@@ -2818,6 +2846,8 @@ pub fn apply_service_operation(
         blocked_reasons.clone(),
         Some(&target_registry_posture),
     )?;
+    let host_fabric_fulfillment_plan = host_fabric_reduction.fulfillment_plan.clone();
+    let host_fabric_topology_projection = host_fabric_reduction.topology_projection.clone();
     let service_hardening_posture = build_service_hardening_posture_for_spec(
         &spec,
         &operation_posture,
@@ -2838,6 +2868,9 @@ pub fn apply_service_operation(
     state
         .host_fabric_fulfillment_plans
         .push(host_fabric_fulfillment_plan.clone());
+    state
+        .host_fabric_topology_projections
+        .push(host_fabric_topology_projection.clone());
     state
         .host_fabric_legacy_control_bridges
         .push(host_fabric_legacy_control_bridge.clone());
@@ -2861,6 +2894,7 @@ pub fn apply_service_operation(
         host_fabric_contribution,
         lifecycle_plan,
         host_fabric_fulfillment_plan,
+        host_fabric_topology_projection,
         host_fabric_legacy_control_bridge,
         service_hardening_posture,
         fabric_control_decision,
@@ -3384,7 +3418,7 @@ pub fn service_manager_lifecycle_fixture(issued_at: u64) -> Result<ServiceManage
         issued_at + 5015,
         vec![],
     )?;
-    let host_fabric_fulfillment_plan = reduce_host_fabric_fulfillment_plan_for_spec(
+    let host_fabric_reduction = reduce_host_fabric_for_spec(
         &spec,
         &lifecycle_operation,
         std::slice::from_ref(&host_fabric_contribution),
@@ -3393,6 +3427,8 @@ pub fn service_manager_lifecycle_fixture(issued_at: u64) -> Result<ServiceManage
         vec![],
         Some(&target_registry_posture),
     )?;
+    let host_fabric_fulfillment_plan = host_fabric_reduction.fulfillment_plan;
+    let host_fabric_topology_projection = host_fabric_reduction.topology_projection;
     let service_hardening_posture = build_service_hardening_posture_for_spec(
         &spec,
         &lifecycle_operation,
@@ -3423,6 +3459,7 @@ pub fn service_manager_lifecycle_fixture(issued_at: u64) -> Result<ServiceManage
         host_fabric_contributions: vec![host_fabric_contribution],
         lifecycle_plans: vec![lifecycle_plan],
         host_fabric_fulfillment_plans: vec![host_fabric_fulfillment_plan],
+        host_fabric_topology_projections: vec![host_fabric_topology_projection],
         service_hardening_postures: vec![service_hardening_posture],
         posture,
     };
@@ -3449,6 +3486,7 @@ pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixtu
         host_fabric_contributions: vec![],
         lifecycle_plans: vec![],
         host_fabric_fulfillment_plans: vec![],
+        host_fabric_topology_projections: vec![],
         host_fabric_legacy_control_bridges: vec![],
         service_hardening_postures: vec![],
         posture: None,
@@ -3506,6 +3544,7 @@ pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixtu
         legacy_blocked_role_refs: vec![],
     })?;
     let aggregate_fulfillment_plan = shadow_parity.reduction.fulfillment_plan.clone();
+    let aggregate_topology_projection = shadow_parity.reduction.topology_projection.clone();
     let service_hardening_observations = outcomes
         .iter()
         .enumerate()
@@ -3524,6 +3563,7 @@ pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixtu
         transition_state: aggregate_fulfillment_plan.state.clone(),
         blocked_reasons: aggregate_fulfillment_plan.blocked_reasons.clone(),
         aggregate_fulfillment_plan,
+        aggregate_topology_projection,
         shadow_parity,
         outcomes,
         service_hardening_observations,
@@ -3609,7 +3649,7 @@ pub fn blocked_operation_fixture(
         requested_at + 235,
         vec![reason.to_string()],
     )?;
-    let host_fabric_fulfillment_plan = reduce_host_fabric_fulfillment_plan_for_spec(
+    let host_fabric_reduction = reduce_host_fabric_for_spec(
         &spec,
         &operation,
         &host_fabric_contribution,
@@ -3618,6 +3658,8 @@ pub fn blocked_operation_fixture(
         vec![reason.to_string()],
         Some(&target_registry_posture),
     )?;
+    let host_fabric_fulfillment_plan = host_fabric_reduction.fulfillment_plan;
+    let host_fabric_topology_projection = host_fabric_reduction.topology_projection;
     let service_hardening_posture = build_service_hardening_posture_for_spec(
         &spec,
         &operation,
@@ -3648,6 +3690,7 @@ pub fn blocked_operation_fixture(
         host_fabric_contributions: host_fabric_contribution,
         lifecycle_plans: vec![lifecycle_plan],
         host_fabric_fulfillment_plans: vec![host_fabric_fulfillment_plan],
+        host_fabric_topology_projections: vec![host_fabric_topology_projection],
         service_hardening_postures: vec![service_hardening_posture],
         posture,
     };
@@ -3685,6 +3728,9 @@ pub fn validate_fixture(fixture: &ServiceManagerLifecycleFixture) -> Result<()> 
     for fulfillment_plan in &fixture.host_fabric_fulfillment_plans {
         validate_host_fabric_fulfillment_plan(fulfillment_plan)?;
     }
+    for topology_projection in &fixture.host_fabric_topology_projections {
+        validate_host_fabric_topology_projection(topology_projection)?;
+    }
     for service_hardening_posture in &fixture.service_hardening_postures {
         validate_service_hardening_posture(service_hardening_posture)?;
     }
@@ -3693,7 +3739,9 @@ pub fn validate_fixture(fixture: &ServiceManagerLifecycleFixture) -> Result<()> 
 
 pub fn validate_fabric_transition_fixture(fixture: &FabricTransitionFixture) -> Result<()> {
     validate_host_fabric_fulfillment_plan(&fixture.aggregate_fulfillment_plan)?;
+    validate_host_fabric_topology_projection(&fixture.aggregate_topology_projection)?;
     validate_host_fabric_fulfillment_plan(&fixture.shadow_parity.reduction.fulfillment_plan)?;
+    validate_host_fabric_topology_projection(&fixture.shadow_parity.reduction.topology_projection)?;
     for outcome in &fixture.outcomes {
         validate_service_manager_operation_posture(&outcome.operation_posture)?;
         validate_service_manager_proof_digest(&outcome.proof_digest)?;
@@ -3704,6 +3752,7 @@ pub fn validate_fabric_transition_fixture(fixture: &FabricTransitionFixture) -> 
         }
         validate_lifecycle_plan_posture(&outcome.lifecycle_plan)?;
         validate_host_fabric_fulfillment_plan(&outcome.host_fabric_fulfillment_plan)?;
+        validate_host_fabric_topology_projection(&outcome.host_fabric_topology_projection)?;
         validate_host_fabric_legacy_control_bridge(&outcome.host_fabric_legacy_control_bridge)?;
         validate_service_hardening_posture(&outcome.service_hardening_posture)?;
         validate_service_manager_posture(&outcome.posture)?;
