@@ -1355,7 +1355,7 @@ fn fabric_control_blocks_expired_plan_before_adapter_execution() {
             fabric_control_role: None,
         },
     )
-    .expect("seed plan");
+    .expect("prepare control plan");
 
     let outcome = apply_service_operation(
         &mut state,
@@ -1399,7 +1399,7 @@ fn fabric_control_covers_rollback_and_missing_authority_posture() {
             fabric_control_role: None,
         },
     )
-    .expect("seed plan");
+    .expect("prepare control plan");
 
     let rollback = apply_service_operation(
         &mut state,
