@@ -147,6 +147,14 @@ pub struct ManagedServiceSpec {
     pub grant_refs: Vec<String>,
     #[serde(default)]
     pub materialization_budget_refs: Vec<String>,
+    #[serde(default)]
+    pub processor_contract_refs: Vec<String>,
+    #[serde(default)]
+    pub processor_role_refs: Vec<String>,
+    #[serde(default)]
+    pub processor_seed_refs: Vec<String>,
+    #[serde(default)]
+    pub processor_report_refs: Vec<String>,
     pub resource_profile_ref: String,
     pub resource_memory_mib: u64,
     pub resource_cpu_pct: u64,
@@ -276,11 +284,47 @@ pub fn default_managed_service_spec() -> ManagedServiceSpec {
         authority_refs: vec!["authority:ops-admin".to_string()],
         grant_refs: vec!["grant:service-manager:lab-service".to_string()],
         materialization_budget_refs: vec!["materialization-budget:service-manager".to_string()],
+        processor_contract_refs: vec![],
+        processor_role_refs: vec![],
+        processor_seed_refs: vec![],
+        processor_report_refs: vec![],
         resource_profile_ref: "resource-profile:service-manager".to_string(),
         resource_memory_mib: 512,
         resource_cpu_pct: 25,
         retention_refs: vec!["retention:service-manager:90d".to_string()],
     }
+}
+
+pub fn cybersec_processor_managed_service_spec() -> ManagedServiceSpec {
+    let mut spec = default_managed_service_spec();
+    spec.service_id = "constitute-cybersec".to_string();
+    spec.subject_ref = "subject:cybersec.processor".to_string();
+    spec.app_contract_ref = Some("app:contract:constitute-cybersec@0.1.0".to_string());
+    spec.build_ref = Some("build:constitute-cybersec:processor".to_string());
+    spec.content_index_refs = vec!["content-index:source:constitute-cybersec".to_string()];
+    spec.source_graph_refs = vec!["source:graph:constitute-cybersec".to_string()];
+    spec.source_snapshot_refs = vec!["source:snapshot:constitute-cybersec:current".to_string()];
+    spec.source_operation_refs =
+        vec!["source:operation:constitute-cybersec:ref-update".to_string()];
+    spec.project_refs = vec!["project:constituency:cybersec".to_string()];
+    spec.work_item_refs = vec!["work-item:cybersec-processor".to_string()];
+    spec.build_run_refs = vec!["build:run:constitute-cybersec:processor".to_string()];
+    spec.build_artifact_refs = vec!["build:artifact:constitute-cybersec:processor".to_string()];
+    spec.build_proof_refs = vec!["build-proof:constitute-cybersec:processor".to_string()];
+    spec.release_candidate_refs =
+        vec!["release:candidate:constitute-cybersec:processor".to_string()];
+    spec.release_ref = Some("release:constitute-cybersec:processor".to_string());
+    spec.rollback_ref = Some("rollback:constitute-cybersec:processor".to_string());
+    spec.access_group_refs = vec!["access-group:logging.cybersec.default".to_string()];
+    spec.grant_refs = vec!["grant:runner:constitute-cybersec:processor".to_string()];
+    spec.materialization_budget_refs =
+        vec!["materialization-budget:cybersec.processor".to_string()];
+    spec.processor_contract_refs = vec!["processor-contract:logging.cybersec".to_string()];
+    spec.processor_role_refs = vec!["role:cybersec.processor".to_string()];
+    spec.processor_seed_refs = vec!["cybersec-seed:logging.default".to_string()];
+    spec.processor_report_refs = vec!["event-fabric-report:logging.cybersec.bootstrap".to_string()];
+    spec.retention_refs = vec!["retention:cybersec:logging.default".to_string()];
+    spec
 }
 
 pub fn default_manager_state(issued_at: u64) -> ServiceManagerState {
@@ -675,6 +719,18 @@ fn project_input_refs(spec: &ManagedServiceSpec) -> Vec<String> {
     refs
 }
 
+fn processor_input_refs(spec: &ManagedServiceSpec) -> Vec<String> {
+    let mut refs = spec.processor_contract_refs.clone();
+    refs.extend(spec.processor_role_refs.clone());
+    refs.extend(spec.processor_seed_refs.clone());
+    refs.extend(spec.processor_report_refs.clone());
+    refs
+}
+
+fn processor_required(spec: &ManagedServiceSpec) -> bool {
+    !processor_input_refs(spec).is_empty()
+}
+
 fn first_ref(values: &[String]) -> Option<String> {
     values
         .iter()
@@ -692,6 +748,7 @@ fn lifecycle_input_refs(
     refs.extend(optional_ref(&spec.release_ref));
     refs.extend(optional_ref(&spec.rollback_ref));
     refs.extend(project_input_refs(spec));
+    refs.extend(processor_input_refs(spec));
     refs
 }
 
@@ -712,6 +769,14 @@ fn contract_target_capability_slot_refs(spec: &ManagedServiceSpec, operation: &s
         "slot:release".to_string(),
         "slot:runner".to_string(),
     ];
+    if processor_required(spec) {
+        refs.extend([
+            "slot:processor-contract".to_string(),
+            "slot:processor-role".to_string(),
+            "slot:processor-seed".to_string(),
+            "slot:processor-report".to_string(),
+        ]);
+    }
     if rollback_required_for(operation) && spec.rollback_required {
         refs.push("slot:rollback".to_string());
     }
@@ -764,6 +829,20 @@ fn contract_target_missing_slot_refs(spec: &ManagedServiceSpec, operation: &str)
     }
     if spec.runner_ref.as_deref().unwrap_or_default().is_empty() {
         refs.push("slot:runner".to_string());
+    }
+    if processor_required(spec) {
+        if spec.processor_contract_refs.is_empty() {
+            refs.push("slot:processor-contract".to_string());
+        }
+        if spec.processor_role_refs.is_empty() {
+            refs.push("slot:processor-role".to_string());
+        }
+        if spec.processor_seed_refs.is_empty() {
+            refs.push("slot:processor-seed".to_string());
+        }
+        if spec.processor_report_refs.is_empty() {
+            refs.push("slot:processor-report".to_string());
+        }
     }
     if rollback_required_for(operation) && spec.rollback_required && spec.rollback_ref.is_none() {
         refs.push("slot:rollback".to_string());
@@ -829,7 +908,8 @@ pub fn build_contract_target_for_spec(
         target_audience: "operator".to_string(),
         safe_facts: json!({
             "serviceId": spec.service_id,
-            "operation": operation
+            "operation": operation,
+            "processorInputRefs": processor_input_refs(spec)
         }),
         issued_at,
         expires_at: Some(issued_at + 3600),
@@ -887,7 +967,8 @@ pub fn build_host_fabric_member_contribution_for_spec(
             "serviceId": spec.service_id,
             "sourceInputRefs": source_input_refs(spec),
             "buildInputRefs": build_input_refs(spec),
-            "projectInputRefs": project_input_refs(spec)
+            "projectInputRefs": project_input_refs(spec),
+            "processorInputRefs": processor_input_refs(spec)
         }),
         observed_at,
         expires_at: Some(observed_at + 3600),
@@ -1010,7 +1091,11 @@ pub fn build_lifecycle_plan_for_spec(
             FABRIC_LIFECYCLE_PHASE_RUN,
             run_state,
             format!("evidence:run:{}", spec.service_id),
-            vec![operation.operation_id.clone()],
+            {
+                let mut refs = vec![operation.operation_id.clone()];
+                refs.extend(processor_input_refs(spec));
+                refs
+            },
             vec![],
         ),
         lifecycle_phase(
@@ -1061,7 +1146,8 @@ pub fn build_lifecycle_plan_for_spec(
             "state": plan_state,
             "sourceInputRefs": source_input_refs(spec),
             "buildInputRefs": build_input_refs(spec),
-            "projectInputRefs": project_input_refs(spec)
+            "projectInputRefs": project_input_refs(spec),
+            "processorInputRefs": processor_input_refs(spec)
         }),
         observed_at,
         expires_at: Some(observed_at + 3600),
@@ -1529,6 +1615,28 @@ pub fn build_contract_target_registry_posture_for_spec(
             .map(|runner_ref| format!("member:{runner_ref}")),
         format!("evidence:runner:{}", spec.service_id),
     ));
+    if processor_required(spec) {
+        slot_postures.push(target_slot_from_optional_ref(
+            "slot:processor-contract",
+            first_ref(&spec.processor_contract_refs),
+            format!("evidence:processor-contract:{}", spec.service_id),
+        ));
+        slot_postures.push(target_slot_from_optional_ref(
+            "slot:processor-role",
+            first_ref(&spec.processor_role_refs),
+            format!("evidence:processor-role:{}", spec.service_id),
+        ));
+        slot_postures.push(target_slot_from_optional_ref(
+            "slot:processor-seed",
+            first_ref(&spec.processor_seed_refs),
+            format!("evidence:processor-seed:{}", spec.service_id),
+        ));
+        slot_postures.push(target_slot_from_optional_ref(
+            "slot:processor-report",
+            first_ref(&spec.processor_report_refs),
+            format!("evidence:processor-report:{}", spec.service_id),
+        ));
+    }
     if rollback_required_for(&operation.operation) && spec.rollback_required {
         slot_postures.push(target_slot_from_optional_ref(
             "slot:rollback",
@@ -1603,7 +1711,8 @@ pub fn build_contract_target_registry_posture_for_spec(
             "operation": operation.operation,
             "sourceInputRefs": source_input_refs(spec),
             "buildInputRefs": build_input_refs(spec),
-            "projectInputRefs": project_input_refs(spec)
+            "projectInputRefs": project_input_refs(spec),
+            "processorInputRefs": processor_input_refs(spec)
         }),
         observed_at,
         expires_at: Some(observed_at + 3600),

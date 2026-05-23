@@ -23,10 +23,10 @@ use constitute_service_manager::{
     ServiceOperationRequest, apply_service_operation, blocked_operation_fixture,
     build_lab_proof_with_train, build_operation_posture, build_operation_posture_for_spec,
     build_release_contract, build_release_contract_with_refs, build_secret_boundary,
-    build_train_digest, default_managed_service_spec, default_manager_state,
-    lab_linux_target_fixture, load_manager_state, reduce_protected_service_manager_posture,
-    save_manager_state, service_manager_lifecycle_fixture, service_manager_status,
-    validate_fixture,
+    build_train_digest, cybersec_processor_managed_service_spec, default_managed_service_spec,
+    default_manager_state, lab_linux_target_fixture, load_manager_state,
+    reduce_protected_service_manager_posture, save_manager_state,
+    service_manager_lifecycle_fixture, service_manager_status, validate_fixture,
 };
 
 const DEFAULT_NOW: u64 = 1_700_000_000;
@@ -885,6 +885,108 @@ fn blocked_rollback_can_report_missing_ref_as_preflight_posture() {
     .expect("blocked rollback posture");
     assert_eq!(operation.rollback_ref, None);
     assert!(validate_service_manager_operation_posture(&operation).is_ok());
+}
+
+#[test]
+fn cybersec_processor_spec_threads_processor_refs_through_lifecycle_fabric() {
+    let spec = cybersec_processor_managed_service_spec();
+    let operation = build_operation_posture_for_spec(
+        &spec,
+        SERVICE_MANAGER_OPERATION_START,
+        SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
+        DEFAULT_NOW + 45,
+        vec![],
+    )
+    .expect("cybersec operation posture");
+    let target = constitute_service_manager::build_contract_target_for_spec(
+        &spec,
+        &operation.operation,
+        DEFAULT_NOW + 46,
+        vec![],
+    )
+    .expect("cybersec contract target");
+    let contribution = constitute_service_manager::build_host_fabric_member_contribution_for_spec(
+        &spec,
+        &operation,
+        DEFAULT_NOW + 47,
+        vec![],
+    )
+    .expect("cybersec contribution")
+    .expect("cybersec contribution present");
+    let lifecycle = constitute_service_manager::build_lifecycle_plan_for_spec(
+        &spec,
+        &operation,
+        vec![contribution.contribution_id.clone()],
+        DEFAULT_NOW + 48,
+        vec![],
+    )
+    .expect("cybersec lifecycle");
+    let registry = constitute_service_manager::build_contract_target_registry_posture_for_spec(
+        &spec,
+        &target,
+        &operation,
+        Some(&contribution),
+        Some(&lifecycle),
+        DEFAULT_NOW + 49,
+        vec![],
+    )
+    .expect("cybersec registry");
+    let fulfillment = constitute_service_manager::reduce_host_fabric_fulfillment_plan_for_spec(
+        &spec,
+        &operation,
+        std::slice::from_ref(&contribution),
+        std::slice::from_ref(&lifecycle),
+        DEFAULT_NOW + 50,
+        vec![],
+        Some(&registry),
+    )
+    .expect("cybersec fulfillment");
+
+    validate_contract_target(&target).expect("target validates");
+    validate_host_fabric_member_contribution(&contribution).expect("contribution validates");
+    validate_lifecycle_plan_posture(&lifecycle).expect("lifecycle validates");
+    validate_contract_target_registry_posture(&registry).expect("registry validates");
+    validate_host_fabric_fulfillment_plan(&fulfillment).expect("fulfillment validates");
+    assert_eq!(
+        target.state,
+        constitute_protocol::FABRIC_CONTRACT_TARGET_READY
+    );
+    assert_eq!(
+        registry.state,
+        constitute_protocol::FABRIC_CONTRACT_TARGET_REGISTRY_READY
+    );
+    assert_eq!(fulfillment.state, FABRIC_FULFILLMENT_PLAN_READY);
+    assert!(
+        target
+            .capability_slot_refs
+            .contains(&"slot:processor-contract".to_string())
+    );
+    assert!(
+        target
+            .capability_slot_refs
+            .contains(&"slot:processor-seed".to_string())
+    );
+    assert!(
+        contribution
+            .input_refs
+            .contains(&"processor-contract:logging.cybersec".to_string())
+    );
+    assert!(
+        contribution
+            .input_refs
+            .contains(&"cybersec-seed:logging.default".to_string())
+    );
+    assert!(lifecycle.phase_postures.iter().any(|phase| {
+        phase.phase == constitute_protocol::FABRIC_LIFECYCLE_PHASE_RUN
+            && phase
+                .output_refs
+                .contains(&"event-fabric-report:logging.cybersec.bootstrap".to_string())
+    }));
+    assert!(registry.slot_postures.iter().any(|slot| {
+        slot.slot_ref == "slot:processor-report"
+            && slot.selected_fulfillment_ref.as_deref()
+                == Some("event-fabric-report:logging.cybersec.bootstrap")
+    }));
 }
 
 #[test]
