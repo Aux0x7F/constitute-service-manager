@@ -17,7 +17,8 @@ use constitute_protocol::{
     SERVICE_MANAGER_PROOF_STATE_BLOCKED, SURFACE_SECRET_BOUNDARY_BLOCKED, validate_contract_target,
     validate_contract_target_registry_posture, validate_host_fabric_fulfillment_plan,
     validate_host_fabric_member_contribution, validate_lifecycle_plan_posture,
-    validate_service_manager_lab_proof, validate_service_manager_operation_posture,
+    validate_service_hardening_posture, validate_service_manager_lab_proof,
+    validate_service_manager_operation_posture,
 };
 use constitute_service_manager::{
     ServiceOperationRequest, apply_service_operation, blocked_operation_fixture,
@@ -47,6 +48,7 @@ fn lifecycle_fixture_covers_manager_operations() {
     assert_eq!(fixture.host_fabric_contributions.len(), 1);
     assert_eq!(fixture.lifecycle_plans.len(), 1);
     assert_eq!(fixture.host_fabric_fulfillment_plans.len(), 1);
+    assert_eq!(fixture.service_hardening_postures.len(), 1);
     assert_eq!(fixture.posture.state, SERVICE_MANAGER_POSTURE_READY);
     assert_eq!(
         fixture.posture.secret_boundary["state"],
@@ -60,6 +62,8 @@ fn lifecycle_fixture_covers_manager_operations() {
     validate_lifecycle_plan_posture(&fixture.lifecycle_plans[0]).expect("lifecycle plan validates");
     validate_host_fabric_fulfillment_plan(&fixture.host_fabric_fulfillment_plans[0])
         .expect("fulfillment plan validates");
+    validate_service_hardening_posture(&fixture.service_hardening_postures[0])
+        .expect("service hardening posture validates");
     assert_eq!(
         fixture.host_fabric_contributions[0].role,
         constitute_protocol::FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER
@@ -75,6 +79,16 @@ fn lifecycle_fixture_covers_manager_operations() {
     assert_eq!(
         fixture.target_registry_postures[0].state,
         constitute_protocol::FABRIC_CONTRACT_TARGET_REGISTRY_READY
+    );
+    assert_eq!(fixture.service_hardening_postures[0].state, "ready");
+    assert_eq!(
+        fixture.service_hardening_postures[0].service_ref,
+        constitute_service_manager::DEFAULT_SUBJECT_REF
+    );
+    assert!(
+        fixture.service_hardening_postures[0]
+            .adapter_posture_refs
+            .contains(&constitute_service_manager::DEFAULT_HOST_ADAPTER_REF.to_string())
     );
     assert!(
         fixture.host_fabric_fulfillment_plans[0]
@@ -447,6 +461,7 @@ fn protected_posture_blocks_missing_lifecycle_proof() {
             host_fabric_contributions: vec![],
             lifecycle_plans: vec![],
             host_fabric_fulfillment_plans: vec![],
+            service_hardening_postures: vec![],
             posture,
         },
     )
@@ -630,6 +645,7 @@ fn dry_run_operation_persists_state_and_reduces_posture() {
     assert_eq!(state.host_fabric_contributions.len(), 1);
     assert_eq!(state.lifecycle_plans.len(), 1);
     assert_eq!(state.host_fabric_fulfillment_plans.len(), 1);
+    assert_eq!(state.service_hardening_postures.len(), 1);
     assert_eq!(outcome.posture.state, SERVICE_MANAGER_POSTURE_READY);
     assert!(outcome.host_fabric_contribution.is_some());
     assert_eq!(
@@ -648,6 +664,15 @@ fn dry_run_operation_persists_state_and_reduces_posture() {
         outcome.target_registry_posture.state,
         constitute_protocol::FABRIC_CONTRACT_TARGET_REGISTRY_READY
     );
+    assert_eq!(outcome.service_hardening_posture.state, "ready");
+    assert!(
+        outcome
+            .service_hardening_posture
+            .evidence_refs
+            .contains(&outcome.host_fabric_fulfillment_plan.plan_id)
+    );
+    validate_service_hardening_posture(&outcome.service_hardening_posture)
+        .expect("service hardening posture validates");
     assert_eq!(
         outcome.operation_posture.subject_ref,
         constitute_service_manager::DEFAULT_SUBJECT_REF
@@ -801,6 +826,13 @@ fn operation_blocks_when_secret_boundary_is_unresolved() {
         SERVICE_MANAGER_PROOF_STATE_BLOCKED
     );
     assert_eq!(outcome.posture.state, SERVICE_MANAGER_POSTURE_BLOCKED);
+    assert_eq!(outcome.service_hardening_posture.state, "blocked");
+    assert!(
+        outcome
+            .service_hardening_posture
+            .blocked_reasons
+            .contains(&"secretBoundary:missingSecretRefs".to_string())
+    );
 }
 
 #[test]

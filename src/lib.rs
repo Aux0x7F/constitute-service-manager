@@ -22,30 +22,30 @@ use constitute_protocol::{
     HostFabricFulfillmentPlan, HostFabricMemberContribution, LifecyclePhasePosture,
     LifecyclePlanPosture, RECORD_CONTRACT_TARGET, RECORD_CONTRACT_TARGET_REGISTRY_POSTURE,
     RECORD_HOST_FABRIC_FULFILLMENT_PLAN, RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION,
-    RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE, RECORD_SERVICE_MANAGER_LAB_PROOF,
-    RECORD_SERVICE_MANAGER_OPERATION_POSTURE, RECORD_SERVICE_MANAGER_POSTURE,
-    RECORD_SERVICE_MANAGER_PROOF_DIGEST, RECORD_SERVICE_MANAGER_RELEASE_CONTRACT,
-    RECORD_SERVICE_MANAGER_SECRET_BOUNDARY, RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture,
-    SERVICE_MANAGER_OPERATION_HEALTH_CHECK, SERVICE_MANAGER_OPERATION_INSTALL,
-    SERVICE_MANAGER_OPERATION_PROMOTE, SERVICE_MANAGER_OPERATION_RELEASE,
-    SERVICE_MANAGER_OPERATION_RESTART, SERVICE_MANAGER_OPERATION_ROLLBACK,
-    SERVICE_MANAGER_OPERATION_SECRET_READY, SERVICE_MANAGER_OPERATION_START,
-    SERVICE_MANAGER_OPERATION_STATE_BLOCKED, SERVICE_MANAGER_OPERATION_STATE_FAILED,
-    SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED, SERVICE_MANAGER_OPERATION_STOP,
-    SERVICE_MANAGER_OPERATION_UPDATE, SERVICE_MANAGER_POSTURE_BLOCKED,
-    SERVICE_MANAGER_POSTURE_READY, SERVICE_MANAGER_PROOF_STATE_BLOCKED,
-    SERVICE_MANAGER_PROOF_STATE_FAILED, SERVICE_MANAGER_PROOF_STATE_PROVED,
-    SURFACE_APP_CONTRACT_STATE_READY, SURFACE_SECRET_BOUNDARY_RESOLVED,
-    ServiceManagerLabProofRecord, ServiceManagerOperationPostureRecord,
-    ServiceManagerPostureRecord, ServiceManagerProofDigestRecord,
-    ServiceManagerReleaseContractRecord, ServiceManagerSecretBoundaryRecord,
-    ServiceManagerTrainDigestRecord, validate_contract_target,
+    RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE, RECORD_SERVICE_HARDENING_POSTURE,
+    RECORD_SERVICE_MANAGER_LAB_PROOF, RECORD_SERVICE_MANAGER_OPERATION_POSTURE,
+    RECORD_SERVICE_MANAGER_POSTURE, RECORD_SERVICE_MANAGER_PROOF_DIGEST,
+    RECORD_SERVICE_MANAGER_RELEASE_CONTRACT, RECORD_SERVICE_MANAGER_SECRET_BOUNDARY,
+    RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture, SERVICE_MANAGER_OPERATION_HEALTH_CHECK,
+    SERVICE_MANAGER_OPERATION_INSTALL, SERVICE_MANAGER_OPERATION_PROMOTE,
+    SERVICE_MANAGER_OPERATION_RELEASE, SERVICE_MANAGER_OPERATION_RESTART,
+    SERVICE_MANAGER_OPERATION_ROLLBACK, SERVICE_MANAGER_OPERATION_SECRET_READY,
+    SERVICE_MANAGER_OPERATION_START, SERVICE_MANAGER_OPERATION_STATE_BLOCKED,
+    SERVICE_MANAGER_OPERATION_STATE_FAILED, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
+    SERVICE_MANAGER_OPERATION_STOP, SERVICE_MANAGER_OPERATION_UPDATE,
+    SERVICE_MANAGER_POSTURE_BLOCKED, SERVICE_MANAGER_POSTURE_READY,
+    SERVICE_MANAGER_PROOF_STATE_BLOCKED, SERVICE_MANAGER_PROOF_STATE_FAILED,
+    SERVICE_MANAGER_PROOF_STATE_PROVED, SURFACE_APP_CONTRACT_STATE_READY,
+    SURFACE_SECRET_BOUNDARY_RESOLVED, ServiceHardeningPostureRecord, ServiceManagerLabProofRecord,
+    ServiceManagerOperationPostureRecord, ServiceManagerPostureRecord,
+    ServiceManagerProofDigestRecord, ServiceManagerReleaseContractRecord,
+    ServiceManagerSecretBoundaryRecord, ServiceManagerTrainDigestRecord, validate_contract_target,
     validate_contract_target_registry_posture, validate_host_fabric_fulfillment_plan,
     validate_host_fabric_member_contribution, validate_lifecycle_plan_posture,
-    validate_service_manager_lab_proof, validate_service_manager_operation_posture,
-    validate_service_manager_posture, validate_service_manager_proof_digest,
-    validate_service_manager_release_contract, validate_service_manager_secret_boundary,
-    validate_service_manager_train_digest,
+    validate_service_hardening_posture, validate_service_manager_lab_proof,
+    validate_service_manager_operation_posture, validate_service_manager_posture,
+    validate_service_manager_proof_digest, validate_service_manager_release_contract,
+    validate_service_manager_secret_boundary, validate_service_manager_train_digest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -79,6 +79,7 @@ pub struct ServiceManagerLifecycleFixture {
     pub host_fabric_contributions: Vec<HostFabricMemberContribution>,
     pub lifecycle_plans: Vec<LifecyclePlanPosture>,
     pub host_fabric_fulfillment_plans: Vec<HostFabricFulfillmentPlan>,
+    pub service_hardening_postures: Vec<ServiceHardeningPostureRecord>,
     pub posture: ServiceManagerPostureRecord,
 }
 
@@ -181,6 +182,8 @@ pub struct ServiceManagerState {
     pub lifecycle_plans: Vec<LifecyclePlanPosture>,
     #[serde(default)]
     pub host_fabric_fulfillment_plans: Vec<HostFabricFulfillmentPlan>,
+    #[serde(default)]
+    pub service_hardening_postures: Vec<ServiceHardeningPostureRecord>,
     pub posture: Option<ServiceManagerPostureRecord>,
     pub updated_at: u64,
 }
@@ -212,6 +215,7 @@ pub struct ServiceOperationOutcome {
     pub host_fabric_contribution: Option<HostFabricMemberContribution>,
     pub lifecycle_plan: LifecyclePlanPosture,
     pub host_fabric_fulfillment_plan: HostFabricFulfillmentPlan,
+    pub service_hardening_posture: ServiceHardeningPostureRecord,
     pub fabric_control_decision: FabricControlDecision,
     pub posture: ServiceManagerPostureRecord,
 }
@@ -337,6 +341,7 @@ pub fn default_manager_state(issued_at: u64) -> ServiceManagerState {
         host_fabric_contributions: vec![],
         lifecycle_plans: vec![],
         host_fabric_fulfillment_plans: vec![],
+        service_hardening_postures: vec![],
         posture: None,
         updated_at: issued_at,
     }
@@ -1865,6 +1870,71 @@ pub fn reduce_host_fabric_fulfillment_plan_for_spec(
     Ok(reduction.fulfillment_plan)
 }
 
+pub fn build_service_hardening_posture_for_spec(
+    spec: &ManagedServiceSpec,
+    operation: &ServiceManagerOperationPostureRecord,
+    host_fabric_fulfillment_plan: &HostFabricFulfillmentPlan,
+    observed_at: u64,
+    blocked_reasons: Vec<String>,
+) -> Result<ServiceHardeningPostureRecord> {
+    validate_service_manager_operation_posture(operation)?;
+    validate_host_fabric_fulfillment_plan(host_fabric_fulfillment_plan)?;
+    let mut blocked_reasons = blocked_reasons;
+    blocked_reasons.extend(host_fabric_contract_blockers(spec));
+    blocked_reasons.extend(host_fabric_fulfillment_plan.blocked_reasons.clone());
+    let blocked_reasons = normalize_blockers(blocked_reasons);
+    let state = if !blocked_reasons.is_empty() {
+        "blocked"
+    } else if host_fabric_fulfillment_plan.state == FABRIC_FULFILLMENT_PLAN_DEGRADED {
+        "degraded"
+    } else {
+        "ready"
+    };
+    let mut evidence_refs = vec![
+        operation.operation_id.clone(),
+        host_fabric_fulfillment_plan.plan_id.clone(),
+        format!("evidence:service-hardening:{}", spec.service_id),
+    ];
+    evidence_refs.extend(operation.evidence_refs.clone());
+    evidence_refs.extend(host_fabric_fulfillment_plan.evidence_refs.clone());
+    evidence_refs.sort();
+    evidence_refs.dedup();
+
+    let posture = ServiceHardeningPostureRecord {
+        kind: Some(RECORD_SERVICE_HARDENING_POSTURE.to_string()),
+        posture_id: format!(
+            "service-hardening:{}:{}:{}",
+            spec.service_id, operation.operation, observed_at
+        ),
+        service_ref: spec.subject_ref.clone(),
+        observer_ref: spec.manager_ref.clone(),
+        state: state.to_string(),
+        process_policy_refs: vec![format!("process-policy:{}", spec.service_id)],
+        launch_policy_refs: vec![format!("launch-policy:{}", spec.service_id)],
+        restart_policy_refs: vec![format!("restart-policy:{}", spec.service_id)],
+        adapter_posture_refs: vec![spec.host_adapter_ref.clone()],
+        firewall_posture_refs: vec![format!("firewall-posture:{}", spec.service_id)],
+        signal_observation_refs: Vec::new(),
+        evidence_refs,
+        safe_facts: json!({
+            "serviceId": spec.service_id,
+            "managerId": spec.manager_id,
+            "operation": operation.operation,
+            "operationState": operation.state,
+            "fabricPlanState": host_fabric_fulfillment_plan.state,
+            "hostAdapterRef": spec.host_adapter_ref,
+            "lifecycleContractRef": spec.lifecycle_contract_ref,
+            "fabricRef": spec.fabric_ref,
+            "associationHandoffRef": spec.association_handoff_ref,
+        }),
+        blocked_reasons,
+        observed_at,
+        expires_at: Some(observed_at + 3600),
+    };
+    validate_service_hardening_posture(&posture)?;
+    Ok(posture)
+}
+
 fn target_registry_blockers(registry: &ContractTargetRegistryPosture) -> Vec<String> {
     let mut blockers = registry.blocked_reasons.clone();
     for slot in &registry.slot_postures {
@@ -2455,6 +2525,13 @@ pub fn apply_service_operation(
         blocked_reasons.clone(),
         Some(&target_registry_posture),
     )?;
+    let service_hardening_posture = build_service_hardening_posture_for_spec(
+        &spec,
+        &operation_posture,
+        &host_fabric_fulfillment_plan,
+        request.requested_at + 115,
+        blocked_reasons.clone(),
+    )?;
     state.operations.push(operation_posture.clone());
     state.proof_digests.push(proof_digest.clone());
     state.contract_targets.push(contract_target.clone());
@@ -2468,7 +2545,10 @@ pub fn apply_service_operation(
     state
         .host_fabric_fulfillment_plans
         .push(host_fabric_fulfillment_plan.clone());
-    state.updated_at = request.requested_at + 110;
+    state
+        .service_hardening_postures
+        .push(service_hardening_posture.clone());
+    state.updated_at = request.requested_at + 115;
     let posture = service_manager_status(state, &spec.service_id, state.updated_at)?;
     state.posture = Some(posture.clone());
 
@@ -2485,6 +2565,7 @@ pub fn apply_service_operation(
         host_fabric_contribution,
         lifecycle_plan,
         host_fabric_fulfillment_plan,
+        service_hardening_posture,
         fabric_control_decision,
         posture,
     })
@@ -2871,6 +2952,13 @@ pub fn service_manager_lifecycle_fixture(issued_at: u64) -> Result<ServiceManage
         vec![],
         Some(&target_registry_posture),
     )?;
+    let service_hardening_posture = build_service_hardening_posture_for_spec(
+        &spec,
+        &lifecycle_operation,
+        &host_fabric_fulfillment_plan,
+        issued_at + 5025,
+        vec![],
+    )?;
     let posture = reduce_protected_service_manager_posture(
         &secret_boundary,
         &release_contract,
@@ -2894,6 +2982,7 @@ pub fn service_manager_lifecycle_fixture(issued_at: u64) -> Result<ServiceManage
         host_fabric_contributions: vec![host_fabric_contribution],
         lifecycle_plans: vec![lifecycle_plan],
         host_fabric_fulfillment_plans: vec![host_fabric_fulfillment_plan],
+        service_hardening_postures: vec![service_hardening_posture],
         posture,
     };
     validate_fixture(&fixture)?;
@@ -2986,6 +3075,13 @@ pub fn blocked_operation_fixture(
         vec![reason.to_string()],
         Some(&target_registry_posture),
     )?;
+    let service_hardening_posture = build_service_hardening_posture_for_spec(
+        &spec,
+        &operation,
+        &host_fabric_fulfillment_plan,
+        requested_at + 245,
+        vec![reason.to_string()],
+    )?;
     let posture = reduce_protected_service_manager_posture(
         &secret_boundary,
         &release_contract,
@@ -3009,6 +3105,7 @@ pub fn blocked_operation_fixture(
         host_fabric_contributions: host_fabric_contribution,
         lifecycle_plans: vec![lifecycle_plan],
         host_fabric_fulfillment_plans: vec![host_fabric_fulfillment_plan],
+        service_hardening_postures: vec![service_hardening_posture],
         posture,
     };
     validate_fixture(&fixture)?;
@@ -3044,6 +3141,9 @@ pub fn validate_fixture(fixture: &ServiceManagerLifecycleFixture) -> Result<()> 
     }
     for fulfillment_plan in &fixture.host_fabric_fulfillment_plans {
         validate_host_fabric_fulfillment_plan(fulfillment_plan)?;
+    }
+    for service_hardening_posture in &fixture.service_hardening_postures {
+        validate_service_hardening_posture(service_hardening_posture)?;
     }
     validate_service_manager_posture(&fixture.posture)
 }
