@@ -2930,6 +2930,16 @@ fn reduce_fabric_control_decision(
                          blocked_reasons: Vec<String>,
                          evidence_refs: Vec<String>|
      -> HostFabricControlDecision {
+        let control_mode = if delegated_role_ref.is_some() {
+            "fabricPreflightLegacyFallback"
+        } else {
+            "legacyDirect"
+        };
+        let quarantine_refs = delegated_role_ref
+            .as_ref()
+            .map(|role| format!("quarantine:service-manager:legacy-control:{role}"))
+            .into_iter()
+            .collect::<Vec<_>>();
         HostFabricControlDecision {
             kind: Some(RECORD_HOST_FABRIC_CONTROL_DECISION.to_string()),
             decision_id: format!(
@@ -2950,11 +2960,12 @@ fn reduce_fabric_control_decision(
                 request.service_id, request.operation
             )),
             fallback_refs: vec!["fallback:service-manager:legacy-control".to_string()],
-            quarantine_refs: vec![],
+            quarantine_refs,
             rollback_ref: Some(format!("rollback:service-manager:{}", request.service_id)),
             blocked_reasons,
             evidence_refs,
             safe_facts: json!({
+                "controlMode": control_mode,
                 "operation": request.operation,
                 "dryRun": request.dry_run,
             }),
@@ -2975,6 +2986,18 @@ fn reduce_fabric_control_decision(
         return Ok(decision);
     };
     let role_ref = fabric_role_ref(role);
+    if spec.authority_refs.is_empty() {
+        let decision = base_decision(
+            FABRIC_CONTROL_DECISION_BLOCKED,
+            Some(role_ref),
+            None,
+            None,
+            vec!["hostFabric:controlAuthorityMissing".to_string()],
+            vec!["evidence:fabric-control:missing-authority".to_string()],
+        );
+        validate_host_fabric_control_decision(&decision)?;
+        return Ok(decision);
+    }
     let latest_plan = state
         .host_fabric_fulfillment_plans
         .iter()

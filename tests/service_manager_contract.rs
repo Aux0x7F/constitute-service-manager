@@ -1283,6 +1283,18 @@ fn cli_run_and_status_roundtrip_state_file() {
         serde_json::from_slice(&controlled_run.stdout).expect("controlled outcome json");
     assert_eq!(controlled_outcome.fabric_control_decision.state, "ready");
     assert_eq!(
+        controlled_outcome.fabric_control_decision.safe_facts["controlMode"],
+        "fabricPreflightLegacyFallback"
+    );
+    assert_eq!(
+        controlled_outcome.fabric_control_decision.fallback_refs,
+        vec!["fallback:service-manager:legacy-control".to_string()]
+    );
+    assert_eq!(
+        controlled_outcome.fabric_control_decision.quarantine_refs,
+        vec!["quarantine:service-manager:legacy-control:role:hostServiceAdapter".to_string()]
+    );
+    assert_eq!(
         controlled_outcome.state,
         SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED
     );
@@ -1296,4 +1308,109 @@ fn cli_run_and_status_roundtrip_state_file() {
         serde_json::from_slice(&status.stdout).expect("posture json");
     assert_eq!(posture.state, SERVICE_MANAGER_POSTURE_READY);
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn fabric_control_blocks_expired_plan_before_adapter_execution() {
+    let mut state = default_manager_state(DEFAULT_NOW);
+    apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: SERVICE_MANAGER_OPERATION_START.to_string(),
+            requested_at: DEFAULT_NOW + 10,
+            dry_run: true,
+            blocked_reason: None,
+            fabric_control_role: None,
+        },
+    )
+    .expect("seed plan");
+
+    let outcome = apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: SERVICE_MANAGER_OPERATION_RESTART.to_string(),
+            requested_at: DEFAULT_NOW + 5_000,
+            dry_run: true,
+            blocked_reason: None,
+            fabric_control_role: Some(FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER.to_string()),
+        },
+    )
+    .expect("expired control outcome");
+
+    assert_eq!(outcome.fabric_control_decision.state, "blocked");
+    assert!(
+        outcome
+            .fabric_control_decision
+            .blocked_reasons
+            .iter()
+            .any(|reason| { reason.starts_with("hostFabric:controlPlanExpired:") })
+    );
+    assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_BLOCKED);
+}
+
+#[test]
+fn fabric_control_covers_rollback_and_missing_authority_posture() {
+    let mut state = default_manager_state(DEFAULT_NOW);
+    apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: SERVICE_MANAGER_OPERATION_START.to_string(),
+            requested_at: DEFAULT_NOW + 10,
+            dry_run: true,
+            blocked_reason: None,
+            fabric_control_role: None,
+        },
+    )
+    .expect("seed plan");
+
+    let rollback = apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: SERVICE_MANAGER_OPERATION_ROLLBACK.to_string(),
+            requested_at: DEFAULT_NOW + 20,
+            dry_run: true,
+            blocked_reason: None,
+            fabric_control_role: Some(FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER.to_string()),
+        },
+    )
+    .expect("rollback control");
+    assert_eq!(rollback.fabric_control_decision.state, "ready");
+    assert_eq!(
+        rollback.fabric_control_decision.rollback_ref.as_deref(),
+        Some("rollback:service-manager:lab-service")
+    );
+    assert_eq!(rollback.state, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED);
+
+    let mut missing_authority = default_manager_state(DEFAULT_NOW);
+    missing_authority.services[0].authority_refs.clear();
+    let blocked = apply_service_operation(
+        &mut missing_authority,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: SERVICE_MANAGER_OPERATION_RESTART.to_string(),
+            requested_at: DEFAULT_NOW + 30,
+            dry_run: true,
+            blocked_reason: None,
+            fabric_control_role: Some(FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER.to_string()),
+        },
+    )
+    .expect("missing authority control");
+
+    assert_eq!(blocked.fabric_control_decision.state, "blocked");
+    assert!(
+        blocked
+            .fabric_control_decision
+            .blocked_reasons
+            .contains(&"hostFabric:controlAuthorityMissing".to_string())
+    );
+    assert!(
+        blocked
+            .blocked_reasons
+            .contains(&"authorityRefs:missing".to_string())
+    );
+    assert_eq!(blocked.state, SERVICE_MANAGER_OPERATION_STATE_BLOCKED);
 }
