@@ -87,7 +87,7 @@ dependencies = [
 [[package]]
 name = "constitute-fabric"
 version = "0.1.0"
-source = "git+https://github.com/Aux0x7F/constitute-fabric?branch=0x%2Ffabric-transition%2Ftopology-execution#e7a500728ec7c1ca869e9932845c632fc9a352dc"
+source = "git+https://github.com/Aux0x7F/constitute-fabric?branch=0x%2Ffabric-transition%2Ftopology-execution#148566766163dfe5c6d18d5257213775f6b7418e"
 dependencies = [
  "anyhow",
  "constitute-protocol",

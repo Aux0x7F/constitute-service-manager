@@ -3574,12 +3574,11 @@ fn build_host_fabric_adapter_execution_evidence(
     evidence_refs.extend(output_refs.clone());
     evidence_refs.sort();
     evidence_refs.dedup();
-    let mut input_refs = vec![
-        decision.operation_ref.clone(),
-        plan.plan_id.clone(),
-        bridge.bridge_id.clone(),
-    ];
-    input_refs.extend(plan.member_contribution_refs.clone());
+    let mut input_refs = vec![decision.operation_ref.clone(), bridge.bridge_id.clone()];
+    if decision.source_plan_ref.is_some() {
+        input_refs.push(plan.plan_id.clone());
+        input_refs.extend(plan.member_contribution_refs.clone());
+    }
     input_refs.sort();
     input_refs.dedup();
     let evidence = reduce_fabric_adapter_execution_evidence(

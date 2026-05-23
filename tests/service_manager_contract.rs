@@ -867,6 +867,18 @@ fn fabric_control_role_blocks_without_existing_fulfillment_plan() {
     assert!(
         outcome
             .host_fabric_adapter_execution_evidence
+            .source_plan_ref
+            .is_none()
+    );
+    assert!(
+        outcome
+            .host_fabric_adapter_execution_evidence
+            .source_plan_observed_at
+            .is_none()
+    );
+    assert!(
+        outcome
+            .host_fabric_adapter_execution_evidence
             .blocked_reasons
             .contains(&"hostFabric:controlPlanMissing:role:hostServiceAdapter".to_string())
     );
@@ -996,6 +1008,26 @@ fn fabric_control_role_allows_operation_when_latest_plan_is_ready() {
     assert_eq!(
         outcome.fabric_control_decision.source_plan_ref.as_deref(),
         Some(warmup.host_fabric_fulfillment_plan.plan_id.as_str())
+    );
+    assert_eq!(
+        outcome.fabric_control_decision.source_plan_observed_at,
+        Some(warmup.host_fabric_fulfillment_plan.observed_at)
+    );
+    assert_eq!(
+        outcome.fabric_control_decision.source_plan_expires_at,
+        warmup.host_fabric_fulfillment_plan.expires_at
+    );
+    assert_eq!(
+        outcome
+            .host_fabric_adapter_execution_evidence
+            .source_plan_observed_at,
+        Some(warmup.host_fabric_fulfillment_plan.observed_at)
+    );
+    assert_eq!(
+        outcome
+            .host_fabric_adapter_execution_evidence
+            .source_plan_expires_at,
+        warmup.host_fabric_fulfillment_plan.expires_at
     );
     assert!(
         outcome
