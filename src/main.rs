@@ -4,8 +4,9 @@ use constitute_protocol::{
 };
 use constitute_service_manager::{
     ServiceOperationRequest, apply_service_operation, blocked_operation_fixture,
-    build_operation_posture, default_manager_state, lab_linux_target_fixture, load_manager_state,
-    save_manager_state, service_manager_lifecycle_fixture, service_manager_status,
+    build_operation_posture, default_manager_state, fabric_transition_fixture,
+    lab_linux_target_fixture, load_manager_state, save_manager_state,
+    service_manager_lifecycle_fixture, service_manager_status,
 };
 
 const DEFAULT_NOW: u64 = 1_700_000_000;
@@ -28,6 +29,10 @@ fn main() -> Result<()> {
                 }
                 "lab-target" | "lab-linux-target" => {
                     let fixture = lab_linux_target_fixture(DEFAULT_NOW)?;
+                    println!("{}", serde_json::to_string_pretty(&fixture)?);
+                }
+                "fabric-transition" => {
+                    let fixture = fabric_transition_fixture(DEFAULT_NOW)?;
                     println!("{}", serde_json::to_string_pretty(&fixture)?);
                 }
                 _ => return Err(anyhow!("unsupported fixture profile")),
@@ -101,6 +106,6 @@ fn read_u64_option(args: &[String], name: &str) -> Option<u64> {
 
 fn print_help() {
     println!(
-        "constitute-service-manager\n\nCommands:\n  fixture lifecycle\n  fixture lab-target\n  operation --operation <name> --state <state> [--blocked <reason>]\n  init --state <path> [--at <time>]\n  run --state <path> --operation <name> [--service <id>] [--at <time>] [--blocked <reason>] [--fabric-control-role <role>] [--execute]\n  status --state <path> [--service <id>] [--at <time>]\n"
+        "constitute-service-manager\n\nCommands:\n  fixture lifecycle\n  fixture lab-target\n  fixture fabric-transition\n  operation --operation <name> --state <state> [--blocked <reason>]\n  init --state <path> [--at <time>]\n  run --state <path> --operation <name> [--service <id>] [--at <time>] [--blocked <reason>] [--fabric-control-role <role>] [--execute]\n  status --state <path> [--service <id>] [--at <time>]\n"
     );
 }

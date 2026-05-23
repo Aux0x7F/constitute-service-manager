@@ -8,8 +8,9 @@ use constitute_protocol::{
     FABRIC_CONTRACT_TARGET_SELECTED, FABRIC_CONTRACT_TARGET_SLOT_DEGRADED,
     FABRIC_CONTRACT_TARGET_SLOT_MISSING, FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED,
     FABRIC_FULFILLMENT_PLAN_BLOCKED, FABRIC_FULFILLMENT_PLAN_READY,
-    FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION,
-    FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER, SERVICE_MANAGER_OPERATION_RELEASE,
+    FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_DOMAIN_SERVICE,
+    FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION, FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
+    FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR, SERVICE_MANAGER_OPERATION_RELEASE,
     SERVICE_MANAGER_OPERATION_RESTART, SERVICE_MANAGER_OPERATION_ROLLBACK,
     SERVICE_MANAGER_OPERATION_SECRET_READY, SERVICE_MANAGER_OPERATION_START,
     SERVICE_MANAGER_OPERATION_STATE_BLOCKED, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
@@ -25,9 +26,10 @@ use constitute_service_manager::{
     build_lab_proof_with_train, build_operation_posture, build_operation_posture_for_spec,
     build_release_contract, build_release_contract_with_refs, build_secret_boundary,
     build_train_digest, cybersec_processor_managed_service_spec, default_managed_service_spec,
-    default_manager_state, lab_linux_target_fixture, load_manager_state,
+    default_manager_state, fabric_transition_fixture, lab_linux_target_fixture, load_manager_state,
     reduce_protected_service_manager_posture, save_manager_state,
-    service_manager_lifecycle_fixture, service_manager_status, validate_fixture,
+    service_manager_lifecycle_fixture, service_manager_status, validate_fabric_transition_fixture,
+    validate_fixture,
 };
 
 const DEFAULT_NOW: u64 = 1_700_000_000;
@@ -687,6 +689,19 @@ fn cli_emits_valid_lab_target_fixture() {
 }
 
 #[test]
+fn cli_emits_valid_fabric_transition_fixture() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_constitute-service-manager"))
+        .args(["fixture", "fabric-transition"])
+        .output()
+        .expect("run cli");
+    assert!(output.status.success());
+    let fixture: constitute_service_manager::FabricTransitionFixture =
+        serde_json::from_slice(&output.stdout).expect("fixture json");
+    assert_eq!(fixture.transition_state, FABRIC_FULFILLMENT_PLAN_READY);
+    validate_fabric_transition_fixture(&fixture).expect("fixture validates");
+}
+
+#[test]
 fn dry_run_operation_persists_state_and_reduces_posture() {
     let mut state = default_manager_state(DEFAULT_NOW);
     let outcome = apply_service_operation(
@@ -1053,6 +1068,11 @@ fn cybersec_processor_spec_threads_processor_refs_through_lifecycle_fabric() {
         constitute_protocol::FABRIC_CONTRACT_TARGET_REGISTRY_READY
     );
     assert_eq!(fulfillment.state, FABRIC_FULFILLMENT_PLAN_READY);
+    assert_eq!(contribution.role, FABRIC_MEMBER_ROLE_DOMAIN_SERVICE);
+    assert_eq!(
+        fulfillment.required_role_refs,
+        vec![role_ref(FABRIC_MEMBER_ROLE_DOMAIN_SERVICE)]
+    );
     assert!(
         target
             .capability_slot_refs
@@ -1084,6 +1104,52 @@ fn cybersec_processor_spec_threads_processor_refs_through_lifecycle_fabric() {
             && slot.selected_fulfillment_ref.as_deref()
                 == Some("event-fabric-report:logging.cybersec.bootstrap")
     }));
+}
+
+#[test]
+fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
+    let fixture = fabric_transition_fixture(DEFAULT_NOW).expect("fabric transition fixture");
+    validate_fabric_transition_fixture(&fixture).expect("fixture validates");
+
+    assert_eq!(fixture.family_ref, "branch-family:0x/fabric-transition");
+    assert_eq!(fixture.services.len(), 4);
+    assert_eq!(fixture.outcomes.len(), 4);
+    assert_eq!(fixture.transition_state, FABRIC_FULFILLMENT_PLAN_READY);
+    assert!(fixture.blocked_reasons.is_empty());
+
+    let service_roles = fixture
+        .services
+        .iter()
+        .map(|service| service.fabric_role.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(service_roles.contains(FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER));
+    assert!(service_roles.contains(FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION));
+    assert!(service_roles.contains(FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR));
+    assert!(service_roles.contains(FABRIC_MEMBER_ROLE_DOMAIN_SERVICE));
+
+    let aggregate_roles = fixture
+        .aggregate_fulfillment_plan
+        .required_role_refs
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER)));
+    assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION)));
+    assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR)));
+    assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_DOMAIN_SERVICE)));
+    assert_eq!(
+        fixture
+            .aggregate_fulfillment_plan
+            .member_contribution_refs
+            .len(),
+        4
+    );
+    assert!(
+        fixture
+            .aggregate_fulfillment_plan
+            .missing_role_refs
+            .is_empty()
+    );
 }
 
 #[test]

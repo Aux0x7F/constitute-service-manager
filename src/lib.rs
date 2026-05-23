@@ -18,25 +18,27 @@ use constitute_protocol::{
     FABRIC_LIFECYCLE_PHASE_ROLLBACK, FABRIC_LIFECYCLE_PHASE_RUN, FABRIC_LIFECYCLE_PHASE_RUNNING,
     FABRIC_LIFECYCLE_PHASE_SOURCE, FABRIC_LIFECYCLE_PHASE_SUCCEEDED, FABRIC_LIFECYCLE_PLAN_BLOCKED,
     FABRIC_LIFECYCLE_PLAN_READY, FABRIC_MEMBER_CONTRIBUTION_BLOCKED,
-    FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
-    HostFabricFulfillmentPlan, HostFabricMemberContribution, LifecyclePhasePosture,
-    LifecyclePlanPosture, RECORD_CONTRACT_TARGET, RECORD_CONTRACT_TARGET_REGISTRY_POSTURE,
-    RECORD_HOST_FABRIC_FULFILLMENT_PLAN, RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION,
-    RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE, RECORD_SERVICE_HARDENING_POSTURE,
-    RECORD_SERVICE_MANAGER_LAB_PROOF, RECORD_SERVICE_MANAGER_OPERATION_POSTURE,
-    RECORD_SERVICE_MANAGER_POSTURE, RECORD_SERVICE_MANAGER_PROOF_DIGEST,
-    RECORD_SERVICE_MANAGER_RELEASE_CONTRACT, RECORD_SERVICE_MANAGER_SECRET_BOUNDARY,
-    RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture, SERVICE_MANAGER_OPERATION_HEALTH_CHECK,
-    SERVICE_MANAGER_OPERATION_INSTALL, SERVICE_MANAGER_OPERATION_PROMOTE,
-    SERVICE_MANAGER_OPERATION_RELEASE, SERVICE_MANAGER_OPERATION_RESTART,
-    SERVICE_MANAGER_OPERATION_ROLLBACK, SERVICE_MANAGER_OPERATION_SECRET_READY,
-    SERVICE_MANAGER_OPERATION_START, SERVICE_MANAGER_OPERATION_STATE_BLOCKED,
-    SERVICE_MANAGER_OPERATION_STATE_FAILED, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
-    SERVICE_MANAGER_OPERATION_STOP, SERVICE_MANAGER_OPERATION_UPDATE,
-    SERVICE_MANAGER_POSTURE_BLOCKED, SERVICE_MANAGER_POSTURE_READY,
-    SERVICE_MANAGER_PROOF_STATE_BLOCKED, SERVICE_MANAGER_PROOF_STATE_FAILED,
-    SERVICE_MANAGER_PROOF_STATE_PROVED, SURFACE_APP_CONTRACT_STATE_READY,
-    SURFACE_SECRET_BOUNDARY_RESOLVED, ServiceHardeningPostureRecord, ServiceManagerLabProofRecord,
+    FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_DOMAIN_SERVICE,
+    FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION, FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
+    FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR, HostFabricFulfillmentPlan, HostFabricMemberContribution,
+    LifecyclePhasePosture, LifecyclePlanPosture, RECORD_CONTRACT_TARGET,
+    RECORD_CONTRACT_TARGET_REGISTRY_POSTURE, RECORD_HOST_FABRIC_FULFILLMENT_PLAN,
+    RECORD_HOST_FABRIC_MEMBER_CONTRIBUTION, RECORD_LIFECYCLE_PLAN_POSTURE, RECORD_RESOURCE_POSTURE,
+    RECORD_SERVICE_HARDENING_POSTURE, RECORD_SERVICE_MANAGER_LAB_PROOF,
+    RECORD_SERVICE_MANAGER_OPERATION_POSTURE, RECORD_SERVICE_MANAGER_POSTURE,
+    RECORD_SERVICE_MANAGER_PROOF_DIGEST, RECORD_SERVICE_MANAGER_RELEASE_CONTRACT,
+    RECORD_SERVICE_MANAGER_SECRET_BOUNDARY, RECORD_SERVICE_MANAGER_TRAIN_DIGEST, ResourcePosture,
+    SERVICE_MANAGER_OPERATION_HEALTH_CHECK, SERVICE_MANAGER_OPERATION_INSTALL,
+    SERVICE_MANAGER_OPERATION_PROMOTE, SERVICE_MANAGER_OPERATION_RELEASE,
+    SERVICE_MANAGER_OPERATION_RESTART, SERVICE_MANAGER_OPERATION_ROLLBACK,
+    SERVICE_MANAGER_OPERATION_SECRET_READY, SERVICE_MANAGER_OPERATION_START,
+    SERVICE_MANAGER_OPERATION_STATE_BLOCKED, SERVICE_MANAGER_OPERATION_STATE_FAILED,
+    SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED, SERVICE_MANAGER_OPERATION_STOP,
+    SERVICE_MANAGER_OPERATION_UPDATE, SERVICE_MANAGER_POSTURE_BLOCKED,
+    SERVICE_MANAGER_POSTURE_READY, SERVICE_MANAGER_PROOF_STATE_BLOCKED,
+    SERVICE_MANAGER_PROOF_STATE_FAILED, SERVICE_MANAGER_PROOF_STATE_PROVED,
+    SURFACE_APP_CONTRACT_STATE_READY, SURFACE_SECRET_BOUNDARY_RESOLVED,
+    ServiceHardeningPostureRecord, ServiceManagerLabProofRecord,
     ServiceManagerOperationPostureRecord, ServiceManagerPostureRecord,
     ServiceManagerProofDigestRecord, ServiceManagerReleaseContractRecord,
     ServiceManagerSecretBoundaryRecord, ServiceManagerTrainDigestRecord, validate_contract_target,
@@ -49,6 +51,7 @@ use constitute_protocol::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -96,6 +99,20 @@ pub struct LabLinuxTargetFixture {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct FabricTransitionFixture {
+    pub family_ref: String,
+    pub fabric_ref: String,
+    pub host_ref: String,
+    pub services: Vec<ManagedServiceSpec>,
+    pub outcomes: Vec<ServiceOperationOutcome>,
+    pub aggregate_fulfillment_plan: HostFabricFulfillmentPlan,
+    pub transition_state: String,
+    #[serde(default)]
+    pub blocked_reasons: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ManagedServiceSpec {
     pub service_id: String,
     pub manager_id: String,
@@ -110,6 +127,8 @@ pub struct ManagedServiceSpec {
     pub host_adapter_ref: String,
     #[serde(default = "default_lifecycle_contract_ref")]
     pub lifecycle_contract_ref: String,
+    #[serde(default = "default_fabric_role")]
+    pub fabric_role: String,
     #[serde(default = "default_association_handoff_ref")]
     pub association_handoff_ref: Option<String>,
     pub app_contract_ref: Option<String>,
@@ -248,6 +267,10 @@ fn default_lifecycle_contract_ref() -> String {
     DEFAULT_LIFECYCLE_CONTRACT_REF.to_string()
 }
 
+fn default_fabric_role() -> String {
+    FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER.to_string()
+}
+
 fn default_association_handoff_ref() -> Option<String> {
     Some(DEFAULT_ASSOCIATION_HANDOFF_REF.to_string())
 }
@@ -264,6 +287,7 @@ pub fn default_managed_service_spec() -> ManagedServiceSpec {
         fabric_ref: DEFAULT_FABRIC_REF.to_string(),
         host_adapter_ref: DEFAULT_HOST_ADAPTER_REF.to_string(),
         lifecycle_contract_ref: DEFAULT_LIFECYCLE_CONTRACT_REF.to_string(),
+        fabric_role: FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER.to_string(),
         association_handoff_ref: Some(DEFAULT_ASSOCIATION_HANDOFF_REF.to_string()),
         app_contract_ref: Some("app-contract:lab-managed@0.1.0".to_string()),
         version: Some("0.1.0".to_string()),
@@ -305,6 +329,9 @@ pub fn cybersec_processor_managed_service_spec() -> ManagedServiceSpec {
     let mut spec = default_managed_service_spec();
     spec.service_id = "constitute-cybersec".to_string();
     spec.subject_ref = "subject:cybersec.processor".to_string();
+    spec.fabric_role = FABRIC_MEMBER_ROLE_DOMAIN_SERVICE.to_string();
+    spec.host_adapter_ref = "contract:domain-service.cybersec@0.1.0".to_string();
+    spec.lifecycle_contract_ref = "contract:lifecycle.domain-service@0.1.0".to_string();
     spec.app_contract_ref = Some("app:contract:constitute-cybersec@0.1.0".to_string());
     spec.build_ref = Some("build:constitute-cybersec:processor".to_string());
     spec.content_index_refs = vec!["content-index:source:constitute-cybersec".to_string()];
@@ -331,6 +358,110 @@ pub fn cybersec_processor_managed_service_spec() -> ManagedServiceSpec {
     spec.processor_report_refs = vec!["event-fabric-report:logging.cybersec.bootstrap".to_string()];
     spec.retention_refs = vec!["retention:cybersec:logging.default".to_string()];
     spec
+}
+
+pub fn service_manager_host_adapter_managed_service_spec() -> ManagedServiceSpec {
+    let mut spec = default_managed_service_spec();
+    spec.service_id = "constitute-service-manager".to_string();
+    spec.subject_ref = "service:service-manager.host-adapter".to_string();
+    spec.app_contract_ref = Some("app:contract:constitute-service-manager@0.1.0".to_string());
+    spec.build_ref = Some("build:constitute-service-manager:host-adapter".to_string());
+    spec.content_index_refs = vec!["content-index:source:constitute-service-manager".to_string()];
+    spec.source_graph_refs = vec!["source:graph:constitute-service-manager".to_string()];
+    spec.source_snapshot_refs =
+        vec!["source:snapshot:constitute-service-manager:current".to_string()];
+    spec.source_operation_refs = vec![
+        "source:operation:constitute-service-manager:ref-update".to_string(),
+        "source:operation:constitute-service-manager:project-link".to_string(),
+    ];
+    spec.project_refs = vec!["project:constituency:service-manager".to_string()];
+    spec.work_item_refs = vec!["work-item:fabric-transition:service-manager".to_string()];
+    spec.build_run_refs = vec!["build:run:constitute-service-manager:host-adapter".to_string()];
+    spec.build_artifact_refs =
+        vec!["build:artifact:constitute-service-manager:host-adapter".to_string()];
+    spec.build_proof_refs = vec!["build-proof:constitute-service-manager:host-adapter".to_string()];
+    spec.release_candidate_refs =
+        vec!["release:candidate:constitute-service-manager:host-adapter".to_string()];
+    spec.release_ref = Some("release:constitute-service-manager:host-adapter".to_string());
+    spec.rollback_ref = Some("rollback:constitute-service-manager:host-adapter".to_string());
+    spec.grant_refs = vec!["grant:service-manager:host-adapter".to_string()];
+    spec.retention_refs = vec!["retention:service-manager:host-adapter".to_string()];
+    spec
+}
+
+pub fn gateway_association_managed_service_spec() -> ManagedServiceSpec {
+    let mut spec = default_managed_service_spec();
+    spec.service_id = "constitute-gateway".to_string();
+    spec.subject_ref = "service:gateway.association".to_string();
+    spec.fabric_role = FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION.to_string();
+    spec.host_adapter_ref = "contract:gateway.association@0.1.0".to_string();
+    spec.lifecycle_contract_ref = "contract:lifecycle.gateway-association@0.1.0".to_string();
+    spec.app_contract_ref = Some("app:contract:constitute-gateway@0.1.0".to_string());
+    spec.build_ref = Some("build:constitute-gateway:association".to_string());
+    spec.content_index_refs = vec!["content-index:source:constitute-gateway".to_string()];
+    spec.source_graph_refs = vec!["source:graph:constitute-gateway".to_string()];
+    spec.source_snapshot_refs = vec!["source:snapshot:constitute-gateway:current".to_string()];
+    spec.source_operation_refs = vec![
+        "source:operation:constitute-gateway:ref-update".to_string(),
+        "source:operation:constitute-gateway:project-link".to_string(),
+    ];
+    spec.project_refs = vec!["project:constituency:gateway".to_string()];
+    spec.work_item_refs = vec!["work-item:fabric-transition:gateway".to_string()];
+    spec.build_run_refs = vec!["build:run:constitute-gateway:association".to_string()];
+    spec.build_artifact_refs = vec!["build:artifact:constitute-gateway:association".to_string()];
+    spec.build_proof_refs = vec!["build-proof:constitute-gateway:association".to_string()];
+    spec.release_candidate_refs =
+        vec!["release:candidate:constitute-gateway:association".to_string()];
+    spec.release_ref = Some("release:constitute-gateway:association".to_string());
+    spec.rollback_ref = Some("rollback:constitute-gateway:association".to_string());
+    spec.grant_refs = vec!["grant:gateway:association".to_string()];
+    spec.retention_refs = vec!["retention:gateway:association".to_string()];
+    spec
+}
+
+pub fn logging_processor_managed_service_spec() -> ManagedServiceSpec {
+    let mut spec = default_managed_service_spec();
+    spec.service_id = "constitute-logging".to_string();
+    spec.subject_ref = "service:logging.processor".to_string();
+    spec.fabric_role = FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR.to_string();
+    spec.host_adapter_ref = "contract:logging.processor@0.1.0".to_string();
+    spec.lifecycle_contract_ref = "contract:lifecycle.logging-processor@0.1.0".to_string();
+    spec.app_contract_ref = Some("app:contract:constitute-logging@0.1.0".to_string());
+    spec.build_ref = Some("build:constitute-logging:processor".to_string());
+    spec.content_index_refs = vec!["content-index:source:constitute-logging".to_string()];
+    spec.source_graph_refs = vec!["source:graph:constitute-logging".to_string()];
+    spec.source_snapshot_refs = vec!["source:snapshot:constitute-logging:current".to_string()];
+    spec.source_operation_refs = vec![
+        "source:operation:constitute-logging:ref-update".to_string(),
+        "source:operation:constitute-logging:project-link".to_string(),
+    ];
+    spec.project_refs = vec!["project:constituency:logging".to_string()];
+    spec.work_item_refs = vec!["work-item:fabric-transition:logging".to_string()];
+    spec.build_run_refs = vec!["build:run:constitute-logging:processor".to_string()];
+    spec.build_artifact_refs = vec!["build:artifact:constitute-logging:processor".to_string()];
+    spec.build_proof_refs = vec!["build-proof:constitute-logging:processor".to_string()];
+    spec.release_candidate_refs =
+        vec!["release:candidate:constitute-logging:processor".to_string()];
+    spec.release_ref = Some("release:constitute-logging:processor".to_string());
+    spec.rollback_ref = Some("rollback:constitute-logging:processor".to_string());
+    spec.access_group_refs = vec!["access-group:event-fabric.logging.default".to_string()];
+    spec.grant_refs = vec!["grant:logging:processor".to_string()];
+    spec.materialization_budget_refs = vec!["materialization-budget:logging.processor".to_string()];
+    spec.processor_contract_refs = vec!["processor-contract:logging.default".to_string()];
+    spec.processor_role_refs = vec!["role:logging.processor".to_string()];
+    spec.processor_seed_refs = vec!["logging-seed:event-fabric.default".to_string()];
+    spec.processor_report_refs = vec!["event-fabric-report:logging.default".to_string()];
+    spec.retention_refs = vec!["retention:logging:default".to_string()];
+    spec
+}
+
+pub fn current_fabric_transition_service_specs() -> Vec<ManagedServiceSpec> {
+    vec![
+        service_manager_host_adapter_managed_service_spec(),
+        gateway_association_managed_service_spec(),
+        logging_processor_managed_service_spec(),
+        cybersec_processor_managed_service_spec(),
+    ]
 }
 
 pub fn default_manager_state(issued_at: u64) -> ServiceManagerState {
@@ -664,6 +795,9 @@ fn host_fabric_contract_blockers(spec: &ManagedServiceSpec) -> Vec<String> {
     if spec.fabric_ref.trim().is_empty() {
         blocked_reasons.push("fabricRef:missing".to_string());
     }
+    if spec.fabric_role.trim().is_empty() {
+        blocked_reasons.push("fabricRole:missing".to_string());
+    }
     if spec.host_ref.as_deref().unwrap_or_default().is_empty() {
         blocked_reasons.push("hostRef:missing".to_string());
     }
@@ -955,7 +1089,7 @@ pub fn build_host_fabric_member_contribution_for_spec(
         fabric_ref: spec.fabric_ref.clone(),
         host_ref: spec.host_ref.clone().unwrap_or_default(),
         member_ref,
-        role: FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER.to_string(),
+        role: fabric_role_for_spec(spec).to_string(),
         state: state.to_string(),
         contract_ref: spec.host_adapter_ref.clone(),
         subject_ref: spec.subject_ref.clone(),
@@ -969,7 +1103,7 @@ pub fn build_host_fabric_member_contribution_for_spec(
         resource_posture: operation.resource_posture.clone(),
         blocked_reasons,
         safe_facts: json!({
-            "role": FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
+            "role": fabric_role_for_spec(spec),
             "operation": operation.operation,
             "serviceId": spec.service_id,
             "sourceInputRefs": source_input_refs(spec),
@@ -1762,8 +1896,9 @@ pub fn build_host_fabric_fulfillment_plan_for_spec_with_target(
         validate_contract_target_registry_posture(registry)?;
         blocked_reasons.extend(target_registry_blockers(registry));
     }
+    let required_role_ref = fabric_role_ref_for_spec(spec);
     let mut missing_role_refs = if member_contribution_refs.is_empty() {
-        vec![format!("role:{FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER}")]
+        vec![required_role_ref.clone()]
     } else {
         vec![]
     };
@@ -1771,7 +1906,7 @@ pub fn build_host_fabric_fulfillment_plan_for_spec_with_target(
         missing_role_refs.extend(target_registry_missing_slot_refs(registry));
     }
     if !missing_role_refs.is_empty() {
-        blocked_reasons.push("hostFabric:missingHostServiceAdapter".to_string());
+        blocked_reasons.push(format!("hostFabric:missingFabricRole:{required_role_ref}"));
     }
     let blocked_reasons = normalize_blockers(blocked_reasons);
     let degraded = target_registry_posture.is_some_and(target_registry_degraded);
@@ -1794,7 +1929,7 @@ pub fn build_host_fabric_fulfillment_plan_for_spec_with_target(
         host_ref: spec.host_ref.clone().unwrap_or_default(),
         contract_ref: spec.host_adapter_ref.clone(),
         state: state.to_string(),
-        required_role_refs: vec![format!("role:{FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER}")],
+        required_role_refs: vec![required_role_ref],
         member_contribution_refs,
         missing_role_refs,
         lifecycle_plan_refs,
@@ -1813,6 +1948,7 @@ pub fn build_host_fabric_fulfillment_plan_for_spec_with_target(
         safe_facts: json!({
             "serviceId": spec.service_id,
             "operation": operation.operation,
+            "role": fabric_role_for_spec(spec),
             "state": state,
             "targetRegistryRef": target_registry_posture.map(|registry| registry.registry_ref.clone())
         }),
@@ -1856,7 +1992,7 @@ pub fn reduce_host_fabric_fulfillment_plan_for_spec(
         host_ref: spec.host_ref.clone().unwrap_or_default(),
         contract_ref: spec.host_adapter_ref.clone(),
         required_roles: vec![HostFabricRoleRequirement {
-            role_ref: format!("role:{FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER}"),
+            role_ref: fabric_role_ref_for_spec(spec),
             min_ready: 1,
         }],
         contributions: host_fabric_contributions.to_vec(),
@@ -2636,6 +2772,9 @@ fn operation_blocked_reasons(
     if spec.fabric_ref.trim().is_empty() {
         blocked_reasons.push("fabricRef:missing".to_string());
     }
+    if spec.fabric_role.trim().is_empty() {
+        blocked_reasons.push("fabricRole:missing".to_string());
+    }
     if spec.host_adapter_ref.trim().is_empty() {
         blocked_reasons.push("hostAdapterRef:missing".to_string());
     }
@@ -2739,6 +2878,19 @@ fn fabric_role_ref(role: &str) -> String {
     } else {
         format!("role:{trimmed}")
     }
+}
+
+fn fabric_role_for_spec(spec: &ManagedServiceSpec) -> &str {
+    let trimmed = spec.fabric_role.trim();
+    if trimmed.is_empty() {
+        FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER
+    } else {
+        trimmed
+    }
+}
+
+fn fabric_role_ref_for_spec(spec: &ManagedServiceSpec) -> String {
+    fabric_role_ref(fabric_role_for_spec(spec))
 }
 
 fn secret_required_for(operation: &str) -> bool {
@@ -2991,6 +3143,87 @@ pub fn service_manager_lifecycle_fixture(issued_at: u64) -> Result<ServiceManage
     Ok(fixture)
 }
 
+pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixture> {
+    let services = current_fabric_transition_service_specs();
+    let fabric_ref = services
+        .first()
+        .map(|service| service.fabric_ref.clone())
+        .unwrap_or_else(default_fabric_ref);
+    let host_ref = services
+        .first()
+        .and_then(|service| service.host_ref.clone())
+        .unwrap_or_else(|| "host:lab-service-manager".to_string());
+    let mut state = ServiceManagerState {
+        services: services.clone(),
+        operations: vec![],
+        proof_digests: vec![],
+        contract_targets: vec![],
+        target_registry_postures: vec![],
+        host_fabric_contributions: vec![],
+        lifecycle_plans: vec![],
+        host_fabric_fulfillment_plans: vec![],
+        service_hardening_postures: vec![],
+        posture: None,
+        updated_at: issued_at,
+    };
+
+    let mut outcomes = Vec::new();
+    for (index, service) in services.iter().enumerate() {
+        let outcome = apply_service_operation(
+            &mut state,
+            ServiceOperationRequest {
+                service_id: service.service_id.clone(),
+                operation: SERVICE_MANAGER_OPERATION_START.to_string(),
+                requested_at: issued_at + 100 + (index as u64 * 250),
+                dry_run: true,
+                blocked_reason: None,
+                fabric_control_role: None,
+            },
+        )?;
+        outcomes.push(outcome);
+    }
+
+    let required_roles = services
+        .iter()
+        .map(fabric_role_ref_for_spec)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|role_ref| HostFabricRoleRequirement {
+            role_ref,
+            min_ready: 1,
+        })
+        .collect::<Vec<_>>();
+    let reduction = reduce_host_fabric(HostFabricReductionInput {
+        plan_id: "fabric-plan:fabric-transition:current-services".to_string(),
+        fabric_ref: fabric_ref.clone(),
+        host_ref: host_ref.clone(),
+        contract_ref: "contract:host-fabric.fabric-transition@0.1.0".to_string(),
+        required_roles,
+        contributions: state.host_fabric_contributions.clone(),
+        lifecycle_plans: state.lifecycle_plans.clone(),
+        materialization_budget_refs: vec!["materialization-budget:fabric-transition".to_string()],
+        known_missing_role_refs: vec![],
+        evidence_refs: vec!["evidence:fabric-transition:current-services".to_string()],
+        blocked_reasons: vec![],
+        association_handoff_ref: Some(DEFAULT_ASSOCIATION_HANDOFF_REF.to_string()),
+        observed_at: issued_at + 2_000,
+        expires_at: Some(issued_at + 5_600),
+    })?;
+    let aggregate_fulfillment_plan = reduction.fulfillment_plan;
+    let fixture = FabricTransitionFixture {
+        family_ref: "branch-family:0x/fabric-transition".to_string(),
+        fabric_ref,
+        host_ref,
+        services,
+        transition_state: aggregate_fulfillment_plan.state.clone(),
+        blocked_reasons: aggregate_fulfillment_plan.blocked_reasons.clone(),
+        aggregate_fulfillment_plan,
+        outcomes,
+    };
+    validate_fabric_transition_fixture(&fixture)?;
+    Ok(fixture)
+}
+
 pub fn blocked_operation_fixture(
     operation: &str,
     reason: &str,
@@ -3148,4 +3381,22 @@ pub fn validate_fixture(fixture: &ServiceManagerLifecycleFixture) -> Result<()> 
         validate_service_hardening_posture(service_hardening_posture)?;
     }
     validate_service_manager_posture(&fixture.posture)
+}
+
+pub fn validate_fabric_transition_fixture(fixture: &FabricTransitionFixture) -> Result<()> {
+    validate_host_fabric_fulfillment_plan(&fixture.aggregate_fulfillment_plan)?;
+    for outcome in &fixture.outcomes {
+        validate_service_manager_operation_posture(&outcome.operation_posture)?;
+        validate_service_manager_proof_digest(&outcome.proof_digest)?;
+        validate_contract_target(&outcome.contract_target)?;
+        validate_contract_target_registry_posture(&outcome.target_registry_posture)?;
+        if let Some(contribution) = &outcome.host_fabric_contribution {
+            validate_host_fabric_member_contribution(contribution)?;
+        }
+        validate_lifecycle_plan_posture(&outcome.lifecycle_plan)?;
+        validate_host_fabric_fulfillment_plan(&outcome.host_fabric_fulfillment_plan)?;
+        validate_service_hardening_posture(&outcome.service_hardening_posture)?;
+        validate_service_manager_posture(&outcome.posture)?;
+    }
+    Ok(())
 }
