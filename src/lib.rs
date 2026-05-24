@@ -10,8 +10,9 @@ use constitute_fabric::{
 };
 use constitute_protocol::{
     CAPABILITY_SWARM_EDGE_ATTACH, CARRIER_EDGE_ADAPTER_WEB_SOCKET,
-    CARRIER_EDGE_NETWORK_LOCAL_NETWORK, CarrierEdgeRequirement, CarrierEdgeSelection,
-    ContractTarget, ContractTargetRegistryPosture, ContractTargetSlotPosture,
+    CARRIER_EDGE_NETWORK_LOCAL_NETWORK, CARRIER_EDGE_SELECTION_ACTIONABLE,
+    CARRIER_EDGE_SELECTION_BLOCKED, CARRIER_EDGE_SELECTION_DEGRADED, CarrierEdgeRequirement,
+    CarrierEdgeSelection, ContractTarget, ContractTargetRegistryPosture, ContractTargetSlotPosture,
     CybersecMitigationConsumerPostureRecord, CybersecMitigationRecommendationRecord,
     FABRIC_ADAPTER_EXECUTION_BLOCKED, FABRIC_ADAPTER_EXECUTION_DEGRADED,
     FABRIC_ADAPTER_EXECUTION_SKIPPED, FABRIC_ADAPTER_EXECUTION_SUCCEEDED,
@@ -144,6 +145,8 @@ pub struct FabricTransitionFixture {
     pub carrier_edge_requirements: Vec<CarrierEdgeRequirement>,
     #[serde(default)]
     pub carrier_edge_selections: Vec<CarrierEdgeSelection>,
+    #[serde(default)]
+    pub carrier_edge_adapter_execution_evidence: Vec<HostFabricAdapterExecutionEvidence>,
     pub shadow_parity: HostFabricShadowParity,
     pub transition_state: String,
     #[serde(default)]
@@ -3992,6 +3995,12 @@ pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixtu
         &state.host_fabric_contributions,
         issued_at + 2_200,
     )?;
+    let carrier_edge_adapter_execution_evidence =
+        reduce_fabric_transition_carrier_edge_adapter_execution(
+            &aggregate_fulfillment_plan,
+            &carrier_edge_reductions,
+            issued_at + 2_400,
+        )?;
     let fixture = FabricTransitionFixture {
         family_ref: "branch-family:0x/fabric-transition".to_string(),
         fabric_ref,
@@ -4007,9 +4016,10 @@ pub fn fabric_transition_fixture(issued_at: u64) -> Result<FabricTransitionFixtu
             .map(|reduction| reduction.requirement.clone())
             .collect(),
         carrier_edge_selections: carrier_edge_reductions
-            .into_iter()
-            .map(|reduction| reduction.selection)
+            .iter()
+            .map(|reduction| reduction.selection.clone())
             .collect(),
+        carrier_edge_adapter_execution_evidence,
         shadow_parity,
         outcomes,
         service_hardening_observations,
@@ -4059,6 +4069,129 @@ fn reduce_fabric_transition_carrier_edges(
                 observed_at: observed_at + (index as u64),
                 expires_at: Some(observed_at + 3_600),
             })
+        })
+        .collect()
+}
+
+fn reduce_fabric_transition_carrier_edge_adapter_execution(
+    plan: &HostFabricFulfillmentPlan,
+    reductions: &[constitute_fabric::CarrierEdgeSelectionReduction],
+    observed_at: u64,
+) -> Result<Vec<HostFabricAdapterExecutionEvidence>> {
+    reductions
+        .iter()
+        .enumerate()
+        .map(|(index, reduction)| {
+            let selection = &reduction.selection;
+            let adapter_ref = selection.selected_adapter_ref.clone().unwrap_or_else(|| {
+                format!("adapter:carrier-edge-unselected:{}", selection.selection_id)
+            });
+            let selection_blocked_reasons = normalize_blockers(selection.blocked_reasons.clone());
+            let adapter_state = match selection.state.as_str() {
+                CARRIER_EDGE_SELECTION_ACTIONABLE => FABRIC_ADAPTER_EXECUTION_SUCCEEDED,
+                CARRIER_EDGE_SELECTION_DEGRADED => FABRIC_ADAPTER_EXECUTION_DEGRADED,
+                CARRIER_EDGE_SELECTION_BLOCKED => FABRIC_ADAPTER_EXECUTION_BLOCKED,
+                other => {
+                    if other.trim().is_empty() {
+                        FABRIC_ADAPTER_EXECUTION_BLOCKED
+                    } else {
+                        FABRIC_ADAPTER_EXECUTION_DEGRADED
+                    }
+                }
+            };
+            let control_blockers = if selection.state == CARRIER_EDGE_SELECTION_BLOCKED {
+                selection_blocked_reasons.clone()
+            } else {
+                vec![]
+            };
+            let mut evidence_refs = selection.evidence_refs.clone();
+            evidence_refs.extend(selection.proof_substrate_refs.clone());
+            evidence_refs.extend(selection.resource_posture_refs.clone());
+            evidence_refs.sort();
+            evidence_refs.dedup();
+            let decision = reduce_fabric_control_decision_from_plan(
+                plan,
+                HostFabricControlDecisionInput {
+                    decision_id: format!(
+                        "decision:carrier-edge-adapter:{}",
+                        selection.selection_id
+                    ),
+                    operation_ref: format!(
+                        "operation:carrier-edge-adapter:{}",
+                        selection.selection_id
+                    ),
+                    subject_ref: adapter_ref.clone(),
+                    control_owner_ref: Some(plan.fabric_ref.clone()),
+                    delegated_role_ref: Some("role:gateway-association".to_string()),
+                    execution_delegation_ref: selection.session_binding_ref.clone(),
+                    authorization_refs: plan.action_authority_refs.clone(),
+                    fallback_refs: selection.fallback_refs.clone(),
+                    quarantine_refs: vec![],
+                    rollback_ref: plan.rollback_refs.first().cloned(),
+                    release_refs: vec![format!(
+                        "release:carrier-edge-adapter:{}",
+                        selection.selection_id
+                    )],
+                    evidence_refs: evidence_refs.clone(),
+                    blocked_reasons: control_blockers,
+                    safe_facts: json!({
+                        "carrierSelectionRef": selection.selection_id,
+                        "adapterKind": selection.adapter_kind,
+                        "networkSensitivity": selection.network_sensitivity.clone(),
+                        "selectedAdapterRef": selection.selected_adapter_ref.clone(),
+                    }),
+                    observed_at: observed_at + (index as u64),
+                    expires_at: selection.expires_at,
+                },
+            )?;
+            reduce_fabric_adapter_execution_evidence(
+                plan,
+                &decision,
+                HostFabricAdapterExecutionInput {
+                    evidence_id: format!(
+                        "evidence:carrier-edge-adapter:{}",
+                        selection.selection_id
+                    ),
+                    adapter_ref,
+                    state: adapter_state.to_string(),
+                    source_bridge_ref: selection.session_binding_ref.clone(),
+                    delegated_role_ref: decision.delegated_role_ref.clone(),
+                    action_authority_refs: plan.action_authority_refs.clone(),
+                    evidence_requirement_refs: plan.evidence_requirement_refs.clone(),
+                    input_refs: vec![
+                        reduction.requirement.requirement_id.clone(),
+                        selection.selection_id.clone(),
+                    ],
+                    output_refs: selection
+                        .session_binding_ref
+                        .clone()
+                        .map(|binding_ref| vec![binding_ref])
+                        .unwrap_or_default(),
+                    fallback_refs: selection.fallback_refs.clone(),
+                    quarantine_refs: decision.quarantine_refs.clone(),
+                    rollback_refs: plan.rollback_refs.clone(),
+                    release_refs: decision.release_refs.clone(),
+                    cleanup_refs: vec![format!(
+                        "cleanup:carrier-edge-adapter:{}",
+                        selection.selection_id
+                    )],
+                    blocked_reasons: if adapter_state == FABRIC_ADAPTER_EXECUTION_SUCCEEDED {
+                        vec![]
+                    } else {
+                        selection_blocked_reasons
+                    },
+                    evidence_refs,
+                    safe_facts: json!({
+                        "carrierSelectionRef": selection.selection_id,
+                        "adapterKind": selection.adapter_kind,
+                        "networkSensitivity": selection.network_sensitivity.clone(),
+                        "sessionBindingRef": selection.session_binding_ref.clone(),
+                        "nonDestructive": true,
+                    }),
+                    observed_at: observed_at + (index as u64),
+                    expires_at: selection.expires_at,
+                },
+            )
         })
         .collect()
 }
@@ -4302,6 +4435,9 @@ pub fn validate_fabric_transition_fixture(fixture: &FabricTransitionFixture) -> 
     }
     for selection in &fixture.carrier_edge_selections {
         validate_carrier_edge_selection(selection)?;
+    }
+    for execution_evidence in &fixture.carrier_edge_adapter_execution_evidence {
+        validate_host_fabric_adapter_execution_evidence(execution_evidence)?;
     }
     for observation in &fixture.service_hardening_observations {
         validate_service_hardening_posture(&observation.service_hardening_posture)?;

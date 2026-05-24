@@ -758,6 +758,27 @@ fn cli_emits_valid_fabric_transition_fixture() {
         !requirement.proof_substrate_refs.is_empty()
             && !requirement.resource_posture_refs.is_empty()
     }));
+    assert_eq!(
+        fixture.carrier_edge_adapter_execution_evidence.len(),
+        fixture.carrier_edge_selections.len()
+    );
+    assert!(
+        fixture
+            .carrier_edge_adapter_execution_evidence
+            .iter()
+            .all(|evidence| {
+                evidence.state == FABRIC_ADAPTER_EXECUTION_SUCCEEDED
+                    && evidence
+                        .source_bridge_ref
+                        .as_deref()
+                        .unwrap_or_default()
+                        .starts_with("binding:gateway-association:")
+                    && evidence
+                        .cleanup_refs
+                        .iter()
+                        .any(|reference| reference.starts_with("cleanup:carrier-edge-adapter:"))
+            })
+    );
     validate_fabric_transition_fixture(&fixture).expect("fixture validates");
 }
 
