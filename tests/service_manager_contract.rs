@@ -4,12 +4,12 @@ use constitute_fabric::{
     reduce_host_fabric_shadow_parity,
 };
 use constitute_protocol::{
-    FABRIC_ADAPTER_EXECUTION_BLOCKED, FABRIC_ADAPTER_EXECUTION_SKIPPED,
-    FABRIC_ADAPTER_EXECUTION_SUCCEEDED, FABRIC_CONTRACT_TARGET_COMPATIBILITY_DEGRADED,
-    FABRIC_CONTRACT_TARGET_REGISTRY_DEGRADED, FABRIC_CONTRACT_TARGET_SELECTED,
-    FABRIC_CONTRACT_TARGET_SLOT_DEGRADED, FABRIC_CONTRACT_TARGET_SLOT_MISSING,
-    FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED, FABRIC_FULFILLMENT_PLAN_BLOCKED,
-    FABRIC_FULFILLMENT_PLAN_READY, FABRIC_LEGACY_CONTROL_BLOCKED,
+    CARRIER_EDGE_NETWORK_LOCAL_NETWORK, FABRIC_ADAPTER_EXECUTION_BLOCKED,
+    FABRIC_ADAPTER_EXECUTION_SKIPPED, FABRIC_ADAPTER_EXECUTION_SUCCEEDED,
+    FABRIC_CONTRACT_TARGET_COMPATIBILITY_DEGRADED, FABRIC_CONTRACT_TARGET_REGISTRY_DEGRADED,
+    FABRIC_CONTRACT_TARGET_SELECTED, FABRIC_CONTRACT_TARGET_SLOT_DEGRADED,
+    FABRIC_CONTRACT_TARGET_SLOT_MISSING, FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED,
+    FABRIC_FULFILLMENT_PLAN_BLOCKED, FABRIC_FULFILLMENT_PLAN_READY, FABRIC_LEGACY_CONTROL_BLOCKED,
     FABRIC_LEGACY_CONTROL_FALLBACK_AVAILABLE, FABRIC_LEGACY_CONTROL_LEGACY_DIRECT,
     FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_BUILD_PROCESSOR,
     FABRIC_MEMBER_ROLE_DOMAIN_SERVICE, FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION,
@@ -743,6 +743,20 @@ fn cli_emits_valid_fabric_transition_fixture() {
     );
     assert!(fixture.carrier_edge_selections.iter().all(|selection| {
         selection.selected_adapter_ref.as_deref() == Some("adapter:gateway-association:websocket")
+    }));
+    assert!(fixture.carrier_edge_selections.iter().all(|selection| {
+        selection.network_sensitivity.as_deref() == Some(CARRIER_EDGE_NETWORK_LOCAL_NETWORK)
+    }));
+    assert!(fixture.carrier_edge_selections.iter().all(|selection| {
+        selection
+            .session_binding_ref
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("binding:gateway-association:")
+    }));
+    assert!(fixture.carrier_edge_requirements.iter().all(|requirement| {
+        !requirement.proof_substrate_refs.is_empty()
+            && !requirement.resource_posture_refs.is_empty()
     }));
     validate_fabric_transition_fixture(&fixture).expect("fixture validates");
 }
@@ -1558,9 +1572,7 @@ fn cli_run_and_status_roundtrip_state_file() {
     validate_host_fabric_legacy_control_bridge(&outcome.host_fabric_legacy_control_bridge)
         .expect("legacy direct bridge validates");
     assert_eq!(
-        outcome
-            .host_fabric_adapter_execution_evidence
-            .state,
+        outcome.host_fabric_adapter_execution_evidence.state,
         FABRIC_ADAPTER_EXECUTION_SKIPPED
     );
 

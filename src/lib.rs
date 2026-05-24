@@ -9,8 +9,9 @@ use constitute_fabric::{
     reduce_host_fabric_shadow_parity,
 };
 use constitute_protocol::{
-    CAPABILITY_SWARM_EDGE_ATTACH, CARRIER_EDGE_ADAPTER_WEB_SOCKET, CarrierEdgeRequirement,
-    CarrierEdgeSelection, ContractTarget, ContractTargetRegistryPosture, ContractTargetSlotPosture,
+    CAPABILITY_SWARM_EDGE_ATTACH, CARRIER_EDGE_ADAPTER_WEB_SOCKET,
+    CARRIER_EDGE_NETWORK_LOCAL_NETWORK, CarrierEdgeRequirement, CarrierEdgeSelection,
+    ContractTarget, ContractTargetRegistryPosture, ContractTargetSlotPosture,
     CybersecMitigationConsumerPostureRecord, CybersecMitigationRecommendationRecord,
     FABRIC_ADAPTER_EXECUTION_BLOCKED, FABRIC_ADAPTER_EXECUTION_DEGRADED,
     FABRIC_ADAPTER_EXECUTION_SKIPPED, FABRIC_ADAPTER_EXECUTION_SUCCEEDED,
@@ -4077,7 +4078,18 @@ fn carrier_candidates_from_gateway_contributions(
                 adapter_ref: "adapter:gateway-association:websocket".to_string(),
                 adapter_kind: CARRIER_EDGE_ADAPTER_WEB_SOCKET.to_string(),
                 contribution_ref: Some(contribution.contribution_id.clone()),
+                session_binding_ref: Some(format!(
+                    "binding:gateway-association:{}",
+                    contribution.contribution_id
+                )),
+                network_sensitivity: Some(CARRIER_EDGE_NETWORK_LOCAL_NETWORK.to_string()),
                 evidence_refs,
+                proof_substrate_refs: vec![format!("proof-substrate:{}", contribution.host_ref)],
+                resource_posture_refs: contribution
+                    .resource_posture
+                    .as_ref()
+                    .map(|posture| vec![posture.posture_id.clone()])
+                    .unwrap_or_default(),
                 blocked_reasons: contribution.blocked_reasons.clone(),
                 state: if contribution.state == FABRIC_MEMBER_CONTRIBUTION_RUNNING {
                     "actionable".to_string()
