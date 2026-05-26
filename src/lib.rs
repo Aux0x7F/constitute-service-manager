@@ -33,15 +33,17 @@ use constitute_protocol::{
     FABRIC_LEGACY_CONTROL_QUARANTINED, FABRIC_LIFECYCLE_DEPENDENCY_DEGRADED,
     FABRIC_LIFECYCLE_DEPENDENCY_MISSING, FABRIC_LIFECYCLE_DEPENDENCY_READY,
     FABRIC_LIFECYCLE_PHASE_BLOCKED, FABRIC_LIFECYCLE_PHASE_BUILD, FABRIC_LIFECYCLE_PHASE_CLEANUP,
-    FABRIC_LIFECYCLE_PHASE_LOAD, FABRIC_LIFECYCLE_PHASE_NOT_REQUIRED,
-    FABRIC_LIFECYCLE_PHASE_OBSERVE, FABRIC_LIFECYCLE_PHASE_READY, FABRIC_LIFECYCLE_PHASE_RELEASE,
-    FABRIC_LIFECYCLE_PHASE_ROLLBACK, FABRIC_LIFECYCLE_PHASE_RUN, FABRIC_LIFECYCLE_PHASE_RUNNING,
-    FABRIC_LIFECYCLE_PHASE_SOURCE, FABRIC_LIFECYCLE_PHASE_SUCCEEDED, FABRIC_LIFECYCLE_PLAN_BLOCKED,
+    FABRIC_LIFECYCLE_PHASE_DEGRADED, FABRIC_LIFECYCLE_PHASE_LOAD,
+    FABRIC_LIFECYCLE_PHASE_NOT_REQUIRED, FABRIC_LIFECYCLE_PHASE_OBSERVE,
+    FABRIC_LIFECYCLE_PHASE_READY, FABRIC_LIFECYCLE_PHASE_RELEASE, FABRIC_LIFECYCLE_PHASE_ROLLBACK,
+    FABRIC_LIFECYCLE_PHASE_RUN, FABRIC_LIFECYCLE_PHASE_RUNNING, FABRIC_LIFECYCLE_PHASE_SOURCE,
+    FABRIC_LIFECYCLE_PHASE_SUCCEEDED, FABRIC_LIFECYCLE_PLAN_BLOCKED,
     FABRIC_LIFECYCLE_PLAN_DEGRADED, FABRIC_LIFECYCLE_PLAN_READY,
     FABRIC_MEMBER_CONTRIBUTION_BLOCKED, FABRIC_MEMBER_CONTRIBUTION_RUNNING,
     FABRIC_MEMBER_ROLE_BUILD_PROCESSOR, FABRIC_MEMBER_ROLE_DOMAIN_SERVICE,
-    FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION, FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
-    FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR, FABRIC_MEMBER_ROLE_RUNTIME,
+    FABRIC_MEMBER_ROLE_EXECUTION_FULFILLMENT, FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION,
+    FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER, FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR,
+    FABRIC_MEMBER_ROLE_RUNTIME, FABRIC_MEMBER_ROLE_SOURCE_CONTENT_INDEX,
     FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE, FABRIC_MEMBER_ROLE_SURFACE,
     HostFabricAdapterExecutionEvidence, HostFabricControlDecision, HostFabricFulfillmentPlan,
     HostFabricLegacyControlBridge, HostFabricMemberContribution, HostFabricTopologyProjection,
@@ -97,6 +99,7 @@ pub const DEFAULT_FABRIC_REF: &str = "fabric:lab-gateway";
 pub const DEFAULT_HOST_ADAPTER_REF: &str = "contract:host-service-adapter.service-manager@0.1.0";
 pub const DEFAULT_LIFECYCLE_CONTRACT_REF: &str = "contract:lifecycle.host-service-adapter@0.1.0";
 pub const DEFAULT_ASSOCIATION_HANDOFF_REF: &str = "handoff:substrate:lab-gateway:initial-owner";
+pub const EXECUTION_FULFILLMENT_SLOT_REF: &str = "slot:execution-fulfillment";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -215,6 +218,20 @@ pub struct ManagedServiceSpec {
     pub build_proof_refs: Vec<String>,
     #[serde(default)]
     pub release_candidate_refs: Vec<String>,
+    #[serde(default)]
+    pub native_module_load_required: bool,
+    #[serde(default)]
+    pub module_resolver_refs: Vec<String>,
+    #[serde(default)]
+    pub module_refs: Vec<String>,
+    #[serde(default)]
+    pub module_artifact_refs: Vec<String>,
+    #[serde(default)]
+    pub module_materialization_refs: Vec<String>,
+    #[serde(default)]
+    pub module_storage_refs: Vec<String>,
+    #[serde(default)]
+    pub module_conflict_refs: Vec<String>,
     pub release_ref: Option<String>,
     pub rollback_ref: Option<String>,
     pub rollback_required: bool,
@@ -313,6 +330,39 @@ pub struct ServiceOperationOutcome {
     pub posture: ServiceManagerPostureRecord,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LifecycleManifestAdmissionInput {
+    pub service_id: Option<String>,
+    pub subject_ref: Option<String>,
+    pub module_ref: Option<String>,
+    pub operation: Option<String>,
+    pub requested_at: Option<u64>,
+    #[serde(default)]
+    pub lifecycle_manifest_seed: Value,
+    #[serde(default)]
+    pub promotion_intent_posture: Value,
+    #[serde(default)]
+    pub host_fabric_contributions: Vec<HostFabricMemberContribution>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LifecycleManifestAdmissionOutcome {
+    pub kind: String,
+    pub state: String,
+    pub service_id: String,
+    pub operation: String,
+    pub lifecycle_manifest_ref: String,
+    pub promotion_intent_ref: String,
+    pub release_contract: ServiceManagerReleaseContractRecord,
+    pub operation_outcome: ServiceOperationOutcome,
+    pub selected_refs: Value,
+    #[serde(default)]
+    pub blocked_reasons: Vec<String>,
+    pub safe_facts: Value,
+}
+
 fn default_fabric_ref() -> String {
     DEFAULT_FABRIC_REF.to_string()
 }
@@ -363,6 +413,13 @@ pub fn default_managed_service_spec() -> ManagedServiceSpec {
         build_artifact_refs: vec!["build:artifact:lab-service:module".to_string()],
         build_proof_refs: vec!["build-proof:lab-service:current".to_string()],
         release_candidate_refs: vec!["release:candidate:lab-service:current".to_string()],
+        native_module_load_required: false,
+        module_resolver_refs: vec![],
+        module_refs: vec![],
+        module_artifact_refs: vec![],
+        module_materialization_refs: vec![],
+        module_storage_refs: vec![],
+        module_conflict_refs: vec![],
         release_ref: Some("release:lab-service:current".to_string()),
         rollback_ref: Some("rollback:lab-service:previous".to_string()),
         rollback_required: true,
@@ -626,6 +683,44 @@ pub fn build_processor_managed_service_spec() -> ManagedServiceSpec {
     spec
 }
 
+pub fn runner_execution_fulfillment_managed_service_spec() -> ManagedServiceSpec {
+    let mut spec = default_managed_service_spec();
+    spec.service_id = "constitute-runner".to_string();
+    spec.subject_ref = "service:runner.execution-fulfillment".to_string();
+    spec.fabric_role = FABRIC_MEMBER_ROLE_EXECUTION_FULFILLMENT.to_string();
+    spec.host_adapter_ref = "contract:runner.execution-fulfillment@0.1.0".to_string();
+    spec.lifecycle_contract_ref = "contract:lifecycle.execution-fulfillment@0.1.0".to_string();
+    spec.app_contract_ref = Some("app:contract:constitute-runner@0.1.0".to_string());
+    spec.build_ref = Some("build:constitute-runner:execution-fulfillment".to_string());
+    spec.content_index_refs = vec!["content-index:source:constitute-runner".to_string()];
+    spec.source_graph_refs = vec!["source:graph:constitute-runner".to_string()];
+    spec.source_snapshot_refs = vec!["source:snapshot:constitute-runner:current".to_string()];
+    spec.source_operation_refs = vec!["source:operation:constitute-runner:ref-update".to_string()];
+    spec.project_refs = vec!["project:constituency:runner".to_string()];
+    spec.work_item_refs = vec!["work-item:fabric-transition:runner-execution".to_string()];
+    spec.build_run_refs = vec!["build:run:constitute-runner:execution-fulfillment".to_string()];
+    spec.build_artifact_refs =
+        vec!["build:artifact:constitute-runner:execution-fulfillment".to_string()];
+    spec.build_proof_refs = vec!["build-proof:constitute-runner:execution-fulfillment".to_string()];
+    spec.release_candidate_refs =
+        vec!["release:candidate:constitute-runner:execution-fulfillment".to_string()];
+    spec.release_ref = Some("release:constitute-runner:execution-fulfillment".to_string());
+    spec.rollback_ref = Some("rollback:constitute-runner:execution-fulfillment".to_string());
+    spec.grant_refs = vec!["grant:runner:execution-fulfillment".to_string()];
+    spec.materialization_budget_refs =
+        vec!["materialization-budget:runner.execution-fulfillment".to_string()];
+    spec.retention_refs = vec!["retention:runner:execution-fulfillment".to_string()];
+    spec.dependency_specs = vec![
+        host_fabric_dependency(
+            "constitute-runner",
+            FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE,
+            10,
+        ),
+        host_fabric_dependency("constitute-runner", FABRIC_MEMBER_ROLE_BUILD_PROCESSOR, 20),
+    ];
+    spec
+}
+
 pub fn runtime_managed_service_spec() -> ManagedServiceSpec {
     let mut spec = default_managed_service_spec();
     spec.service_id = "constitute-runtime".to_string();
@@ -704,6 +799,7 @@ pub fn current_fabric_transition_service_specs() -> Vec<ManagedServiceSpec> {
         gateway_association_managed_service_spec(),
         storage_fulfillment_managed_service_spec(),
         build_processor_managed_service_spec(),
+        runner_execution_fulfillment_managed_service_spec(),
         runtime_managed_service_spec(),
         surface_managed_service_spec(),
         logging_processor_managed_service_spec(),
@@ -712,8 +808,17 @@ pub fn current_fabric_transition_service_specs() -> Vec<ManagedServiceSpec> {
 }
 
 pub fn default_manager_state(issued_at: u64) -> ServiceManagerState {
+    let mut seen_service_ids = BTreeSet::new();
+    let mut services = Vec::new();
+    for service in std::iter::once(default_managed_service_spec())
+        .chain(current_fabric_transition_service_specs())
+    {
+        if seen_service_ids.insert(service.service_id.clone()) {
+            services.push(service);
+        }
+    }
     ServiceManagerState {
-        services: vec![default_managed_service_spec()],
+        services,
         operations: vec![],
         proof_digests: vec![],
         contract_targets: vec![],
@@ -795,6 +900,11 @@ fn release_contract_blockers_for_spec(spec: &ManagedServiceSpec) -> Vec<String> 
     if spec.release_candidate_refs.is_empty() {
         blocked_reasons.push("releaseContract:missingReleaseCandidateRefs".to_string());
     }
+    blocked_reasons.extend(
+        native_module_load_blockers(spec)
+            .into_iter()
+            .map(|reason| format!("releaseContract:{reason}")),
+    );
     normalize_blockers(blocked_reasons)
 }
 
@@ -857,7 +967,9 @@ pub fn build_release_contract_for_spec(
             "buildRunRefs": spec.build_run_refs,
             "buildArtifactRefs": spec.build_artifact_refs,
             "buildProofRefs": spec.build_proof_refs,
-            "releaseCandidateRefs": spec.release_candidate_refs
+            "releaseCandidateRefs": spec.release_candidate_refs,
+            "nativeModuleLoadRefs": native_module_load_refs(spec),
+            "nativeModuleConflictRefs": spec.module_conflict_refs
         }),
         issued_at,
         expires_at: Some(issued_at + 3600),
@@ -875,6 +987,366 @@ pub fn build_release_contract_with_refs(
         proof_digest_refs,
         lab_proof_refs,
     )
+}
+
+fn json_string_ref(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn json_string_refs(value: &Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn merge_unique_refs(groups: Vec<Vec<String>>) -> Vec<String> {
+    groups
+        .into_iter()
+        .flatten()
+        .filter(|value| !value.trim().is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn lifecycle_manifest_dependency_specs(
+    input: &LifecycleManifestAdmissionInput,
+    spec: &ManagedServiceSpec,
+) -> Vec<ManagedServiceDependencySpec> {
+    let source_refs = merge_unique_refs(vec![
+        spec.content_index_refs.clone(),
+        spec.source_graph_refs.clone(),
+        spec.source_snapshot_refs.clone(),
+        spec.source_operation_refs.clone(),
+    ]);
+    let build_refs = merge_unique_refs(vec![
+        spec.build_ref.clone().into_iter().collect(),
+        spec.build_run_refs.clone(),
+        spec.build_artifact_refs.clone(),
+        spec.build_proof_refs.clone(),
+    ]);
+    let storage_refs = merge_unique_refs(vec![
+        spec.build_artifact_refs.clone(),
+        json_string_refs(&input.lifecycle_manifest_seed, "storageRefs"),
+    ]);
+    let execution_refs = merge_unique_refs(vec![
+        input.module_ref.clone().into_iter().collect(),
+        json_string_refs(&input.lifecycle_manifest_seed, "moduleRefs"),
+        json_string_refs(&input.lifecycle_manifest_seed, "moduleArtifactRefs"),
+        json_string_refs(&input.lifecycle_manifest_seed, "artifactRefs"),
+        json_string_refs(&input.lifecycle_manifest_seed, "storageRefs"),
+        spec.release_candidate_refs.clone(),
+    ]);
+
+    let mut seen_roles = BTreeSet::new();
+    let mut dependency_specs = Vec::new();
+    let mut push_dependency = |role: &str, order: u64, refs: &[String]| {
+        if refs.is_empty() || !seen_roles.insert(role.to_string()) {
+            return;
+        }
+        dependency_specs.push(host_fabric_dependency(&spec.service_id, role, order));
+    };
+    push_dependency(FABRIC_MEMBER_ROLE_SOURCE_CONTENT_INDEX, 10, &source_refs);
+    push_dependency(FABRIC_MEMBER_ROLE_BUILD_PROCESSOR, 20, &build_refs);
+    push_dependency(FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE, 30, &storage_refs);
+    push_dependency(
+        FABRIC_MEMBER_ROLE_EXECUTION_FULFILLMENT,
+        40,
+        &execution_refs,
+    );
+    dependency_specs
+}
+
+fn lifecycle_manifest_admission_spec(
+    input: &LifecycleManifestAdmissionInput,
+) -> (ManagedServiceSpec, Vec<String>, bool) {
+    let manifest = &input.lifecycle_manifest_seed;
+    let promotion = &input.promotion_intent_posture;
+    let manifest_ref = json_string_ref(manifest, "manifestRef");
+    let promotion_intent_ref = json_string_ref(promotion, "intentionRef");
+    let canonical_hash_ref = json_string_ref(promotion, "canonicalHashRef");
+    let target_ref = json_string_ref(manifest, "targetRef");
+
+    let mut blocked_reasons = Vec::new();
+    if manifest_ref.is_none() {
+        blocked_reasons.push("lifecycleManifest:missingManifestRef".to_string());
+    }
+    if promotion_intent_ref.is_none() {
+        blocked_reasons.push("promotionIntent:missingIntentionRef".to_string());
+    }
+    if json_string_ref(manifest, "state").as_deref() == Some("blocked") {
+        blocked_reasons.push("lifecycleManifest:blocked".to_string());
+    }
+    if json_string_ref(promotion, "state").as_deref() == Some("blocked") {
+        blocked_reasons.push("promotionIntent:blocked".to_string());
+    }
+    blocked_reasons.extend(
+        json_string_refs(manifest, "blockedReasons")
+            .into_iter()
+            .map(|reason| format!("lifecycleManifest:{reason}")),
+    );
+    blocked_reasons.extend(
+        json_string_refs(promotion, "blockedReasons")
+            .into_iter()
+            .map(|reason| format!("promotionIntent:{reason}")),
+    );
+
+    let mut spec = build_processor_managed_service_spec();
+    if let Some(service_id) = input
+        .service_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        spec.service_id = service_id.to_string();
+    }
+    if let Some(subject_ref) = input
+        .subject_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            input
+                .module_ref
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+    {
+        spec.subject_ref = subject_ref.to_string();
+    }
+    if let Some(manifest_ref) = &manifest_ref {
+        spec.lifecycle_contract_ref = manifest_ref.clone();
+    }
+    spec.app_contract_ref = target_ref.clone().or(spec.app_contract_ref);
+    spec.content_index_refs = merge_unique_refs(vec![
+        json_string_refs(manifest, "contentIndexRefs"),
+        json_string_refs(promotion, "contentIndexRefs"),
+    ]);
+    spec.source_graph_refs = json_string_refs(promotion, "sourceGraphRefs");
+    spec.source_snapshot_refs = merge_unique_refs(vec![
+        json_string_refs(manifest, "sourceSnapshotRefs"),
+        json_string_refs(promotion, "sourceSnapshotRefs"),
+    ]);
+    spec.source_operation_refs = merge_unique_refs(vec![
+        promotion_intent_ref.clone().into_iter().collect(),
+        canonical_hash_ref.clone().into_iter().collect(),
+        target_ref.clone().into_iter().collect(),
+        json_string_refs(promotion, "branchRefs"),
+    ]);
+    spec.project_refs = json_string_refs(promotion, "projectRefs");
+    spec.work_item_refs = json_string_refs(promotion, "workItemRefs");
+    spec.build_run_refs = json_string_refs(manifest, "buildRunRefs");
+    let build_refs = merge_unique_refs(vec![
+        json_string_refs(manifest, "buildRefs"),
+        json_string_refs(promotion, "buildRefs"),
+    ]);
+    spec.build_ref = first_ref(&build_refs).or(spec.build_ref);
+    spec.build_artifact_refs = json_string_refs(manifest, "artifactRefs");
+    spec.build_proof_refs = merge_unique_refs(vec![
+        json_string_refs(manifest, "proofRefs"),
+        json_string_refs(manifest, "proofGateRefs"),
+        json_string_refs(promotion, "proofGateRefs"),
+    ]);
+    spec.release_candidate_refs = merge_unique_refs(vec![
+        json_string_refs(manifest, "releaseCandidateRefs"),
+        json_string_refs(promotion, "releaseRefs"),
+    ]);
+    spec.release_ref = first_ref(&spec.release_candidate_refs).or(spec.release_ref);
+    spec.rollback_ref = first_ref(&merge_unique_refs(vec![
+        json_string_refs(manifest, "rollbackRefs"),
+        json_string_refs(promotion, "rollbackRefs"),
+    ]))
+    .or(spec.rollback_ref);
+    spec.compatibility_refs = merge_unique_refs(vec![
+        spec.compatibility_refs,
+        json_string_refs(promotion, "compatibilityRefs"),
+        vec!["compat:service-manager:lifecycle-manifest-admission-v1".to_string()],
+    ]);
+    spec.authority_refs = merge_unique_refs(vec![
+        spec.authority_refs,
+        json_string_refs(manifest, "governanceRefs"),
+        json_string_refs(promotion, "reducerRefs"),
+    ]);
+    spec.grant_refs = merge_unique_refs(vec![
+        spec.grant_refs,
+        vec![format!(
+            "grant:service-manager:manifest-admission:{}",
+            spec.service_id
+        )],
+    ]);
+    spec.secret_refs = vec![format!("secret-ref:{}:runtime", spec.service_id)];
+    spec.access_group_refs = vec![format!("access-group:{}:runtime", spec.service_id)];
+    spec.retention_refs = merge_unique_refs(vec![
+        spec.retention_refs,
+        json_string_refs(manifest, "cleanupRefs"),
+    ]);
+    spec.dependency_specs = lifecycle_manifest_dependency_specs(input, &spec);
+
+    let degraded = json_string_ref(manifest, "state").as_deref() == Some("degraded")
+        || json_string_ref(promotion, "state").as_deref() == Some("degraded")
+        || !json_string_refs(manifest, "conflictRefs").is_empty()
+        || !json_string_refs(promotion, "conflictRefs").is_empty();
+
+    (spec, normalize_blockers(blocked_reasons), degraded)
+}
+
+pub fn admit_lifecycle_manifest(
+    input: LifecycleManifestAdmissionInput,
+) -> Result<LifecycleManifestAdmissionOutcome> {
+    for contribution in &input.host_fabric_contributions {
+        validate_host_fabric_member_contribution(contribution)?;
+    }
+    let requested_at = input.requested_at.unwrap_or(1_700_000_000);
+    let operation = input
+        .operation
+        .clone()
+        .unwrap_or_else(|| SERVICE_MANAGER_OPERATION_PROMOTE.to_string());
+    let manifest_ref = json_string_ref(&input.lifecycle_manifest_seed, "manifestRef")
+        .unwrap_or_else(|| "lifecycle:manifest:missing".to_string());
+    let promotion_intent_ref = json_string_ref(&input.promotion_intent_posture, "intentionRef")
+        .unwrap_or_else(|| "promotion:intent:missing".to_string());
+    let (spec, admission_blockers, degraded) = lifecycle_manifest_admission_spec(&input);
+    let release_contract = build_release_contract_for_spec(
+        &spec,
+        requested_at,
+        json_string_refs(&input.lifecycle_manifest_seed, "proofRefs"),
+        json_string_refs(&input.lifecycle_manifest_seed, "evidenceRefs"),
+    );
+    validate_service_manager_release_contract(&release_contract)?;
+    let release_blockers = release_contract.blocked_reasons.clone();
+    let explicit_blockers = normalize_blockers(
+        admission_blockers
+            .iter()
+            .cloned()
+            .chain(release_blockers.iter().cloned())
+            .collect(),
+    );
+    let mut state = default_manager_state(requested_at);
+    state.services = vec![spec.clone()];
+    state.operations = vec![];
+    state.proof_digests = vec![];
+    state.contract_targets = vec![];
+    state.target_registry_postures = vec![];
+    state.host_fabric_contributions = input.host_fabric_contributions.clone();
+    state.lifecycle_plans = vec![];
+    state.host_fabric_fulfillment_plans = vec![];
+    state.host_fabric_topology_projections = vec![];
+    state.host_fabric_legacy_control_bridges = vec![];
+    state.host_fabric_adapter_execution_evidence = vec![];
+    state.service_hardening_postures = vec![];
+    state.posture = None;
+    let operation_outcome = apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: spec.service_id.clone(),
+            operation: operation.clone(),
+            requested_at,
+            dry_run: true,
+            blocked_reason: if explicit_blockers.is_empty() {
+                None
+            } else {
+                Some("lifecycleManifestAdmission:blocked".to_string())
+            },
+            fabric_control_role: None,
+        },
+    )?;
+    let blocked_reasons = normalize_blockers(
+        explicit_blockers
+            .iter()
+            .cloned()
+            .chain(operation_outcome.blocked_reasons.iter().cloned())
+            .chain(
+                operation_outcome
+                    .lifecycle_plan
+                    .blocked_reasons
+                    .iter()
+                    .cloned(),
+            )
+            .collect(),
+    );
+    let state = if !blocked_reasons.is_empty() {
+        "blocked"
+    } else if degraded {
+        "degraded"
+    } else {
+        SURFACE_APP_CONTRACT_STATE_READY
+    };
+    let dependency_edges = operation_outcome.lifecycle_plan.dependency_edges.clone();
+    let dependency_missing_refs = dependency_edges
+        .iter()
+        .filter(|edge| edge.state == FABRIC_LIFECYCLE_DEPENDENCY_MISSING)
+        .map(|edge| edge.target_ref.clone())
+        .collect::<Vec<_>>();
+    let dependency_ready_refs = dependency_edges
+        .iter()
+        .filter(|edge| edge.state == FABRIC_LIFECYCLE_DEPENDENCY_READY)
+        .map(|edge| edge.target_ref.clone())
+        .collect::<Vec<_>>();
+
+    Ok(LifecycleManifestAdmissionOutcome {
+        kind: "service-manager.lifecycle-manifest.admission".to_string(),
+        state: state.to_string(),
+        service_id: spec.service_id.clone(),
+        operation,
+        lifecycle_manifest_ref: manifest_ref,
+        promotion_intent_ref,
+        release_contract,
+        operation_outcome,
+        selected_refs: json!({
+            "contentIndexRefs": spec.content_index_refs.clone(),
+            "sourceGraphRefs": spec.source_graph_refs.clone(),
+            "sourceSnapshotRefs": spec.source_snapshot_refs.clone(),
+            "sourceOperationRefs": spec.source_operation_refs.clone(),
+            "buildRef": spec.build_ref.clone(),
+            "buildRunRefs": spec.build_run_refs.clone(),
+            "buildArtifactRefs": spec.build_artifact_refs.clone(),
+            "buildProofRefs": spec.build_proof_refs.clone(),
+            "storageRefs": json_string_refs(&input.lifecycle_manifest_seed, "storageRefs"),
+            "moduleRefs": merge_unique_refs(vec![
+                input.module_ref.clone().into_iter().collect(),
+                json_string_refs(&input.lifecycle_manifest_seed, "moduleRefs")
+            ]),
+            "moduleArtifactRefs": json_string_refs(&input.lifecycle_manifest_seed, "moduleArtifactRefs"),
+            "moduleMaterializationRefs": json_string_refs(&input.lifecycle_manifest_seed, "materializationRefs"),
+            "releaseCandidateRefs": spec.release_candidate_refs.clone(),
+            "releaseRef": spec.release_ref.clone(),
+            "rollbackRef": spec.rollback_ref.clone(),
+            "compatibilityRefs": spec.compatibility_refs.clone()
+        }),
+        blocked_reasons,
+        safe_facts: json!({
+            "acceptedAsMain": input.lifecycle_manifest_seed
+                .get("safeFacts")
+                .and_then(|safe_facts| safe_facts.get("acceptedAsMain"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            "manifestState": json_string_ref(&input.lifecycle_manifest_seed, "state").unwrap_or_default(),
+            "promotionState": json_string_ref(&input.promotion_intent_posture, "state").unwrap_or_default(),
+            "dependencyReductionDeferred": false,
+            "serviceManagerOwnsSourceTruth": false,
+            "serviceManagerOwnsDependencyExecution": false,
+            "dependencyEdgeCount": dependency_edges.len(),
+            "dependencyReadyRefs": dependency_ready_refs,
+            "dependencyMissingRefs": dependency_missing_refs,
+            "inputHostFabricContributionCount": input.host_fabric_contributions.len()
+        }),
+    })
 }
 
 pub fn build_operation_posture(
@@ -1060,6 +1532,7 @@ fn host_fabric_contract_blockers(spec: &ManagedServiceSpec) -> Vec<String> {
     if spec.lifecycle_contract_ref.trim().is_empty() {
         blocked_reasons.push("lifecycleContractRef:missing".to_string());
     }
+    blocked_reasons.extend(native_module_load_blockers(spec));
     blocked_reasons
 }
 
@@ -1095,6 +1568,72 @@ fn source_input_refs(spec: &ManagedServiceSpec) -> Vec<String> {
     refs
 }
 
+fn native_module_load_declared(spec: &ManagedServiceSpec) -> bool {
+    spec.native_module_load_required
+        || !spec.module_resolver_refs.is_empty()
+        || !spec.module_refs.is_empty()
+        || !spec.module_artifact_refs.is_empty()
+        || !spec.module_materialization_refs.is_empty()
+        || !spec.module_storage_refs.is_empty()
+        || !spec.module_conflict_refs.is_empty()
+}
+
+fn native_module_load_refs(spec: &ManagedServiceSpec) -> Vec<String> {
+    let mut refs = Vec::new();
+    refs.extend(spec.module_resolver_refs.clone());
+    refs.extend(spec.module_refs.clone());
+    refs.extend(spec.module_artifact_refs.clone());
+    refs.extend(spec.module_materialization_refs.clone());
+    refs.extend(spec.module_storage_refs.clone());
+    refs.sort();
+    refs.dedup();
+    refs
+}
+
+fn native_module_posture_refs(spec: &ManagedServiceSpec) -> Vec<String> {
+    let mut refs = native_module_load_refs(spec);
+    refs.extend(spec.module_conflict_refs.clone());
+    refs.sort();
+    refs.dedup();
+    refs
+}
+
+fn native_module_load_blockers(spec: &ManagedServiceSpec) -> Vec<String> {
+    if !native_module_load_declared(spec) {
+        return vec![];
+    }
+    let mut blockers = Vec::new();
+    if spec.module_resolver_refs.is_empty() {
+        blockers.push("moduleLoad:missingModuleResolverRef".to_string());
+    }
+    if spec.module_refs.is_empty() {
+        blockers.push("moduleLoad:missingModuleRef".to_string());
+    }
+    if spec.module_artifact_refs.is_empty() {
+        blockers.push("moduleLoad:missingArtifactRef".to_string());
+    }
+    if spec.module_materialization_refs.is_empty() {
+        blockers.push("moduleLoad:missingMaterializationRef".to_string());
+    }
+    if spec.module_storage_refs.is_empty() {
+        blockers.push("moduleLoad:missingStorageRef".to_string());
+    }
+    normalize_blockers(blockers)
+}
+
+fn native_module_load_state(spec: &ManagedServiceSpec, blockers: &[String]) -> &'static str {
+    if !native_module_load_declared(spec) {
+        return FABRIC_LIFECYCLE_PHASE_SUCCEEDED;
+    }
+    if !blockers.is_empty() {
+        return FABRIC_LIFECYCLE_PHASE_BLOCKED;
+    }
+    if !spec.module_conflict_refs.is_empty() {
+        return FABRIC_LIFECYCLE_PHASE_DEGRADED;
+    }
+    FABRIC_LIFECYCLE_PHASE_SUCCEEDED
+}
+
 fn host_fabric_module_refs(spec: &ManagedServiceSpec) -> Vec<String> {
     let mut refs = vec![
         spec.host_adapter_ref.clone(),
@@ -1103,6 +1642,8 @@ fn host_fabric_module_refs(spec: &ManagedServiceSpec) -> Vec<String> {
     refs.extend(optional_ref(&spec.app_contract_ref));
     refs.extend(spec.build_artifact_refs.clone());
     refs.extend(spec.processor_contract_refs.clone());
+    refs.extend(spec.module_refs.clone());
+    refs.extend(spec.module_artifact_refs.clone());
     refs.sort();
     refs.dedup();
     refs
@@ -1224,6 +1765,7 @@ fn lifecycle_input_refs(
     refs.extend(optional_ref(&spec.rollback_ref));
     refs.extend(project_input_refs(spec));
     refs.extend(processor_input_refs(spec));
+    refs.extend(native_module_posture_refs(spec));
     refs
 }
 
@@ -1242,7 +1784,7 @@ fn contract_target_capability_slot_refs(spec: &ManagedServiceSpec, operation: &s
         "slot:release-candidate".to_string(),
         "slot:project-work".to_string(),
         "slot:release".to_string(),
-        "slot:runner".to_string(),
+        EXECUTION_FULFILLMENT_SLOT_REF.to_string(),
     ];
     if processor_required(spec) {
         refs.extend([
@@ -1250,6 +1792,15 @@ fn contract_target_capability_slot_refs(spec: &ManagedServiceSpec, operation: &s
             "slot:processor-role".to_string(),
             "slot:processor-seed".to_string(),
             "slot:processor-report".to_string(),
+        ]);
+    }
+    if native_module_load_declared(spec) {
+        refs.extend([
+            "slot:module-resolver".to_string(),
+            "slot:module".to_string(),
+            "slot:module-artifact".to_string(),
+            "slot:module-materialization".to_string(),
+            "slot:module-storage".to_string(),
         ]);
     }
     if rollback_required_for(operation) && spec.rollback_required {
@@ -1303,7 +1854,7 @@ fn contract_target_missing_slot_refs(spec: &ManagedServiceSpec, operation: &str)
         refs.push("slot:release".to_string());
     }
     if spec.runner_ref.as_deref().unwrap_or_default().is_empty() {
-        refs.push("slot:runner".to_string());
+        refs.push(EXECUTION_FULFILLMENT_SLOT_REF.to_string());
     }
     if processor_required(spec) {
         if spec.processor_contract_refs.is_empty() {
@@ -1317,6 +1868,23 @@ fn contract_target_missing_slot_refs(spec: &ManagedServiceSpec, operation: &str)
         }
         if spec.processor_report_refs.is_empty() {
             refs.push("slot:processor-report".to_string());
+        }
+    }
+    if native_module_load_declared(spec) {
+        if spec.module_resolver_refs.is_empty() {
+            refs.push("slot:module-resolver".to_string());
+        }
+        if spec.module_refs.is_empty() {
+            refs.push("slot:module".to_string());
+        }
+        if spec.module_artifact_refs.is_empty() {
+            refs.push("slot:module-artifact".to_string());
+        }
+        if spec.module_materialization_refs.is_empty() {
+            refs.push("slot:module-materialization".to_string());
+        }
+        if spec.module_storage_refs.is_empty() {
+            refs.push("slot:module-storage".to_string());
         }
     }
     if rollback_required_for(operation) && spec.rollback_required && spec.rollback_ref.is_none() {
@@ -1384,7 +1952,9 @@ pub fn build_contract_target_for_spec(
         safe_facts: json!({
             "serviceId": spec.service_id,
             "operation": operation,
-            "processorInputRefs": processor_input_refs(spec)
+            "processorInputRefs": processor_input_refs(spec),
+            "nativeModuleLoadRefs": native_module_load_refs(spec),
+            "nativeModuleConflictRefs": spec.module_conflict_refs
         }),
         issued_at,
         expires_at: Some(issued_at + 3600),
@@ -1447,7 +2017,9 @@ pub fn build_host_fabric_member_contribution_for_spec(
             "sourceInputRefs": source_input_refs(spec),
             "buildInputRefs": build_input_refs(spec),
             "projectInputRefs": project_input_refs(spec),
-            "processorInputRefs": processor_input_refs(spec)
+            "processorInputRefs": processor_input_refs(spec),
+            "nativeModuleLoadRefs": native_module_load_refs(spec),
+            "nativeModuleConflictRefs": spec.module_conflict_refs
         }),
         observed_at,
         expires_at: Some(observed_at + 3600),
@@ -1507,11 +2079,16 @@ pub fn build_lifecycle_plan_for_spec_with_roles(
     }
     let dependency_edges = lifecycle_dependency_edges_for_spec(spec, &available_role_refs);
     blocked_reasons.extend(lifecycle_dependency_blockers(&dependency_edges));
+    let module_load_blockers = native_module_load_blockers(spec);
+    blocked_reasons.extend(module_load_blockers.clone());
     let blocked_reasons = normalize_blockers(blocked_reasons);
     let dependency_degraded = dependency_edges
         .iter()
         .any(|edge| edge.state == FABRIC_LIFECYCLE_DEPENDENCY_DEGRADED);
-    let plan_state = if blocked_reasons.is_empty() && dependency_degraded {
+    let module_load_degraded =
+        module_load_blockers.is_empty() && !spec.module_conflict_refs.is_empty();
+    let plan_state = if blocked_reasons.is_empty() && (dependency_degraded || module_load_degraded)
+    {
         FABRIC_LIFECYCLE_PLAN_DEGRADED
     } else if blocked_reasons.is_empty() {
         FABRIC_LIFECYCLE_PLAN_READY
@@ -1595,11 +2172,15 @@ pub fn build_lifecycle_plan_for_spec_with_roles(
         ),
         lifecycle_phase(
             FABRIC_LIFECYCLE_PHASE_LOAD,
-            FABRIC_LIFECYCLE_PHASE_SUCCEEDED,
+            native_module_load_state(spec, &module_load_blockers),
             vec![],
             format!("evidence:load:{}", spec.service_id),
-            vec![operation.operation_id.clone()],
-            vec![],
+            {
+                let mut refs = vec![operation.operation_id.clone()];
+                refs.extend(native_module_posture_refs(spec));
+                refs
+            },
+            module_load_blockers,
         ),
         lifecycle_phase(
             FABRIC_LIFECYCLE_PHASE_RUN,
@@ -1666,7 +2247,9 @@ pub fn build_lifecycle_plan_for_spec_with_roles(
             "sourceInputRefs": source_input_refs(spec),
             "buildInputRefs": build_input_refs(spec),
             "projectInputRefs": project_input_refs(spec),
-            "processorInputRefs": processor_input_refs(spec)
+            "processorInputRefs": processor_input_refs(spec),
+            "nativeModuleLoadRefs": native_module_load_refs(spec),
+            "nativeModuleConflictRefs": spec.module_conflict_refs
         }),
         observed_at,
         expires_at: Some(observed_at + 3600),
@@ -2127,7 +2710,7 @@ pub fn build_contract_target_registry_posture_for_spec(
         format!("evidence:release:{}", spec.service_id),
     ));
     slot_postures.push(target_slot_from_optional_ref(
-        "slot:runner",
+        EXECUTION_FULFILLMENT_SLOT_REF,
         spec.runner_ref
             .as_ref()
             .filter(|runner_ref| !runner_ref.trim().is_empty())
@@ -2154,6 +2737,33 @@ pub fn build_contract_target_registry_posture_for_spec(
             "slot:processor-report",
             first_ref(&spec.processor_report_refs),
             format!("evidence:processor-report:{}", spec.service_id),
+        ));
+    }
+    if native_module_load_declared(spec) {
+        slot_postures.push(target_slot_from_optional_ref(
+            "slot:module-resolver",
+            first_ref(&spec.module_resolver_refs),
+            format!("evidence:module-resolver:{}", spec.service_id),
+        ));
+        slot_postures.push(target_slot_from_optional_ref(
+            "slot:module",
+            first_ref(&spec.module_refs),
+            format!("evidence:module:{}", spec.service_id),
+        ));
+        slot_postures.push(target_slot_from_optional_ref(
+            "slot:module-artifact",
+            first_ref(&spec.module_artifact_refs),
+            format!("evidence:module-artifact:{}", spec.service_id),
+        ));
+        slot_postures.push(target_slot_from_optional_ref(
+            "slot:module-materialization",
+            first_ref(&spec.module_materialization_refs),
+            format!("evidence:module-materialization:{}", spec.service_id),
+        ));
+        slot_postures.push(target_slot_from_optional_ref(
+            "slot:module-storage",
+            first_ref(&spec.module_storage_refs),
+            format!("evidence:module-storage:{}", spec.service_id),
         ));
     }
     if rollback_required_for(&operation.operation) && spec.rollback_required {
@@ -2231,7 +2841,9 @@ pub fn build_contract_target_registry_posture_for_spec(
             "sourceInputRefs": source_input_refs(spec),
             "buildInputRefs": build_input_refs(spec),
             "projectInputRefs": project_input_refs(spec),
-            "processorInputRefs": processor_input_refs(spec)
+            "processorInputRefs": processor_input_refs(spec),
+            "nativeModuleLoadRefs": native_module_load_refs(spec),
+            "nativeModuleConflictRefs": spec.module_conflict_refs
         }),
         observed_at,
         expires_at: Some(observed_at + 3600),
@@ -3117,13 +3729,11 @@ pub fn apply_service_operation(
         .clone()
         .into_iter()
         .collect::<Vec<_>>();
-    let mut available_contributions = state.host_fabric_contributions.clone();
-    available_contributions.extend(host_fabric_contributions.clone());
     let lifecycle_plan = build_lifecycle_plan_for_spec_with_roles(
         &spec,
         &operation_posture,
         member_contribution_refs.clone(),
-        available_fabric_role_refs(&available_contributions),
+        available_fabric_role_refs(&state.host_fabric_contributions),
         request.requested_at + 100,
         blocked_reasons.clone(),
     )?;
@@ -3296,6 +3906,7 @@ fn operation_blocked_reasons(
     if spec.lifecycle_contract_ref.trim().is_empty() {
         blocked_reasons.push("lifecycleContractRef:missing".to_string());
     }
+    blocked_reasons.extend(native_module_load_blockers(spec));
     blocked_reasons
 }
 

@@ -11,11 +11,15 @@ use constitute_protocol::{
     FABRIC_CONTRACT_TARGET_SLOT_MISSING, FABRIC_CONTRACT_TARGET_SLOT_NOT_REQUIRED,
     FABRIC_FULFILLMENT_PLAN_BLOCKED, FABRIC_FULFILLMENT_PLAN_READY, FABRIC_LEGACY_CONTROL_BLOCKED,
     FABRIC_LEGACY_CONTROL_FALLBACK_AVAILABLE, FABRIC_LEGACY_CONTROL_LEGACY_DIRECT,
-    FABRIC_MEMBER_CONTRIBUTION_RUNNING, FABRIC_MEMBER_ROLE_BUILD_PROCESSOR,
-    FABRIC_MEMBER_ROLE_DOMAIN_SERVICE, FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION,
+    FABRIC_LIFECYCLE_PHASE_BLOCKED, FABRIC_LIFECYCLE_PHASE_DEGRADED, FABRIC_LIFECYCLE_PHASE_LOAD,
+    FABRIC_LIFECYCLE_PHASE_SUCCEEDED, FABRIC_LIFECYCLE_PLAN_BLOCKED,
+    FABRIC_LIFECYCLE_PLAN_DEGRADED, FABRIC_MEMBER_CONTRIBUTION_RUNNING,
+    FABRIC_MEMBER_ROLE_BUILD_PROCESSOR, FABRIC_MEMBER_ROLE_DOMAIN_SERVICE,
+    FABRIC_MEMBER_ROLE_EXECUTION_FULFILLMENT, FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION,
     FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER, FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR,
-    FABRIC_MEMBER_ROLE_RUNTIME, FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE,
-    FABRIC_MEMBER_ROLE_SURFACE, SERVICE_MANAGER_OPERATION_RELEASE,
+    FABRIC_MEMBER_ROLE_RUNTIME, FABRIC_MEMBER_ROLE_SOURCE_CONTENT_INDEX,
+    FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE, FABRIC_MEMBER_ROLE_SURFACE,
+    SERVICE_MANAGER_OPERATION_HEALTH_CHECK, SERVICE_MANAGER_OPERATION_RELEASE,
     SERVICE_MANAGER_OPERATION_RESTART, SERVICE_MANAGER_OPERATION_ROLLBACK,
     SERVICE_MANAGER_OPERATION_SECRET_READY, SERVICE_MANAGER_OPERATION_START,
     SERVICE_MANAGER_OPERATION_STATE_BLOCKED, SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
@@ -29,7 +33,8 @@ use constitute_protocol::{
     validate_service_manager_operation_posture,
 };
 use constitute_service_manager::{
-    ServiceOperationRequest, apply_service_operation, blocked_operation_fixture,
+    DEFAULT_RUNNER_REF, LifecycleManifestAdmissionInput, ServiceOperationRequest,
+    admit_lifecycle_manifest, apply_service_operation, blocked_operation_fixture,
     build_lab_proof_with_train, build_operation_posture, build_operation_posture_for_spec,
     build_release_contract, build_release_contract_with_refs, build_secret_boundary,
     build_train_digest, cybersec_processor_managed_service_spec, default_managed_service_spec,
@@ -43,6 +48,51 @@ const DEFAULT_NOW: u64 = 1_700_000_000;
 
 fn role_ref(role: &str) -> String {
     format!("role:{role}")
+}
+
+fn admission_dependency_contribution(
+    role: &str,
+    suffix: &str,
+) -> constitute_protocol::HostFabricMemberContribution {
+    build_host_fabric_member_contribution(HostFabricMemberContributionSpec {
+        contribution_id: format!("fabric-contribution:manifest-admission:{suffix}"),
+        fabric_ref: "fabric:lab-gateway".to_string(),
+        host_ref: "host:lab-service-manager".to_string(),
+        member_ref: DEFAULT_RUNNER_REF.to_string(),
+        participant_ref: format!("participant:manifest-admission:{suffix}"),
+        role: role.to_string(),
+        role_ref: role_ref(role),
+        state: FABRIC_MEMBER_CONTRIBUTION_RUNNING.to_string(),
+        contract_ref: format!("contract:manifest-admission.{suffix}@0.1.0"),
+        subject_ref: format!("subject:manifest-admission:{suffix}"),
+        module_refs: vec![format!("module:manifest-admission:{suffix}")],
+        source_refs: vec![format!("content-index:manifest-admission:{suffix}")],
+        capability_refs: vec![format!("capability:manifest-admission:{suffix}")],
+        grant_refs: vec![format!("grant:manifest-admission:{suffix}")],
+        input_refs: vec![format!("input:manifest-admission:{suffix}")],
+        output_refs: vec![format!("output:manifest-admission:{suffix}")],
+        evidence_refs: vec![format!("evidence:manifest-admission:{suffix}")],
+        lifecycle_plan_refs: vec![],
+        release_refs: vec![format!("release:manifest-admission:{suffix}")],
+        resource_posture: None,
+        blocked_reasons: vec![],
+        safe_facts: serde_json::json!({ "fixture": "manifest-admission-dependency" }),
+        observed_at: DEFAULT_NOW + 1_200,
+        expires_at: Some(DEFAULT_NOW + 3_600),
+    })
+    .expect("dependency contribution")
+}
+
+fn native_loaded_lab_spec() -> constitute_service_manager::ManagedServiceSpec {
+    let mut spec = default_managed_service_spec();
+    spec.native_module_load_required = true;
+    spec.module_resolver_refs = vec!["module-resolver:native-dev:lab".to_string()];
+    spec.module_refs = vec!["module:native-dev:lab-service".to_string()];
+    spec.module_artifact_refs = vec!["artifact:native-dev:lab-service:abc123".to_string()];
+    spec.module_materialization_refs =
+        vec!["materialized:path:workspace-dev:lab-service".to_string()];
+    spec.module_storage_refs = vec!["storage:materialized-local:lab-service".to_string()];
+    spec
 }
 
 #[test]
@@ -224,6 +274,184 @@ fn lifecycle_fixture_covers_manager_operations() {
         .find(|operation| operation.operation == SERVICE_MANAGER_OPERATION_ROLLBACK)
         .expect("rollback operation");
     assert!(rollback.rollback_ref.is_some());
+}
+
+#[test]
+fn native_module_load_refs_thread_through_service_lifecycle() {
+    let spec = native_loaded_lab_spec();
+    let operation = build_operation_posture_for_spec(
+        &spec,
+        SERVICE_MANAGER_OPERATION_START,
+        SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
+        DEFAULT_NOW + 12,
+        vec![],
+    )
+    .expect("operation posture");
+    let target = constitute_service_manager::build_contract_target_for_spec(
+        &spec,
+        &operation.operation,
+        DEFAULT_NOW + 13,
+        vec![],
+    )
+    .expect("contract target");
+    let contribution = constitute_service_manager::build_host_fabric_member_contribution_for_spec(
+        &spec,
+        &operation,
+        DEFAULT_NOW + 14,
+        vec![],
+    )
+    .expect("contribution")
+    .expect("contribution present");
+    let lifecycle = constitute_service_manager::build_lifecycle_plan_for_spec(
+        &spec,
+        &operation,
+        vec![contribution.contribution_id.clone()],
+        DEFAULT_NOW + 15,
+        vec![],
+    )
+    .expect("lifecycle");
+    let registry = constitute_service_manager::build_contract_target_registry_posture_for_spec(
+        &spec,
+        &target,
+        &operation,
+        Some(&contribution),
+        Some(&lifecycle),
+        DEFAULT_NOW + 16,
+        vec![],
+    )
+    .expect("registry");
+
+    validate_contract_target(&target).expect("target validates");
+    validate_host_fabric_member_contribution(&contribution).expect("contribution validates");
+    validate_lifecycle_plan_posture(&lifecycle).expect("lifecycle validates");
+    validate_contract_target_registry_posture(&registry).expect("registry validates");
+    assert!(
+        target
+            .capability_slot_refs
+            .contains(&"slot:module-resolver".to_string())
+    );
+    assert!(
+        target
+            .capability_slot_refs
+            .contains(&"slot:module-storage".to_string())
+    );
+    assert!(
+        contribution
+            .module_refs
+            .contains(&"module:native-dev:lab-service".to_string())
+    );
+    assert!(
+        contribution
+            .module_refs
+            .contains(&"artifact:native-dev:lab-service:abc123".to_string())
+    );
+    assert!(
+        contribution
+            .input_refs
+            .contains(&"storage:materialized-local:lab-service".to_string())
+    );
+    let load = lifecycle
+        .phase_postures
+        .iter()
+        .find(|phase| phase.phase == FABRIC_LIFECYCLE_PHASE_LOAD)
+        .expect("load phase");
+    assert_eq!(load.state, FABRIC_LIFECYCLE_PHASE_SUCCEEDED);
+    assert!(load.blocked_reasons.is_empty());
+    assert!(
+        load.output_refs
+            .contains(&"module-resolver:native-dev:lab".to_string())
+    );
+    assert!(
+        load.output_refs
+            .contains(&"artifact:native-dev:lab-service:abc123".to_string())
+    );
+    assert!(registry.slot_postures.iter().any(|slot| {
+        slot.slot_ref == "slot:module-storage"
+            && slot.selected_fulfillment_ref.as_deref()
+                == Some("storage:materialized-local:lab-service")
+    }));
+}
+
+#[test]
+fn native_module_load_conflicts_degrade_without_blocking_operation() {
+    let mut spec = native_loaded_lab_spec();
+    spec.module_conflict_refs = vec!["transition-conflict:lab-service:repo:dirty".to_string()];
+    let operation = build_operation_posture_for_spec(
+        &spec,
+        SERVICE_MANAGER_OPERATION_START,
+        SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED,
+        DEFAULT_NOW + 22,
+        vec![],
+    )
+    .expect("operation posture");
+    let contribution = constitute_service_manager::build_host_fabric_member_contribution_for_spec(
+        &spec,
+        &operation,
+        DEFAULT_NOW + 23,
+        vec![],
+    )
+    .expect("contribution")
+    .expect("contribution present");
+    let lifecycle = constitute_service_manager::build_lifecycle_plan_for_spec(
+        &spec,
+        &operation,
+        vec![contribution.contribution_id],
+        DEFAULT_NOW + 24,
+        vec![],
+    )
+    .expect("lifecycle");
+    let load = lifecycle
+        .phase_postures
+        .iter()
+        .find(|phase| phase.phase == FABRIC_LIFECYCLE_PHASE_LOAD)
+        .expect("load phase");
+
+    validate_lifecycle_plan_posture(&lifecycle).expect("lifecycle validates");
+    assert_eq!(lifecycle.state, FABRIC_LIFECYCLE_PLAN_DEGRADED);
+    assert_eq!(load.state, FABRIC_LIFECYCLE_PHASE_DEGRADED);
+    assert!(load.blocked_reasons.is_empty());
+    assert!(
+        load.output_refs
+            .contains(&"transition-conflict:lab-service:repo:dirty".to_string())
+    );
+}
+
+#[test]
+fn native_module_load_blocks_when_required_materialization_is_missing() {
+    let mut state = default_manager_state(DEFAULT_NOW);
+    let mut spec = native_loaded_lab_spec();
+    spec.module_storage_refs = vec![];
+    state.services = vec![spec];
+    let outcome = apply_service_operation(
+        &mut state,
+        ServiceOperationRequest {
+            service_id: "lab-service".to_string(),
+            operation: SERVICE_MANAGER_OPERATION_START.to_string(),
+            requested_at: DEFAULT_NOW + 32,
+            dry_run: true,
+            blocked_reason: None,
+            fabric_control_role: None,
+        },
+    )
+    .expect("apply operation");
+    let load = outcome
+        .lifecycle_plan
+        .phase_postures
+        .iter()
+        .find(|phase| phase.phase == FABRIC_LIFECYCLE_PHASE_LOAD)
+        .expect("load phase");
+
+    assert_eq!(outcome.state, SERVICE_MANAGER_OPERATION_STATE_BLOCKED);
+    assert!(
+        outcome
+            .blocked_reasons
+            .contains(&"moduleLoad:missingStorageRef".to_string())
+    );
+    assert_eq!(load.state, FABRIC_LIFECYCLE_PHASE_BLOCKED);
+    assert!(
+        load.blocked_reasons
+            .contains(&"moduleLoad:missingStorageRef".to_string())
+    );
 }
 
 #[test]
@@ -1163,7 +1391,7 @@ fn operation_blocks_when_secret_boundary_is_unresolved() {
 }
 
 #[test]
-fn target_reduction_blocks_missing_runner_slot_before_host_fabric_ready() {
+fn target_reduction_blocks_missing_execution_fulfillment_slot_before_host_fabric_ready() {
     let mut state = default_manager_state(DEFAULT_NOW);
     state.services[0].runner_ref = None;
 
@@ -1189,7 +1417,7 @@ fn target_reduction_blocks_missing_runner_slot_before_host_fabric_ready() {
         outcome
             .contract_target
             .missing_slot_refs
-            .contains(&"slot:runner".to_string())
+            .contains(&"slot:execution-fulfillment".to_string())
     );
     assert_eq!(
         outcome.target_registry_posture.state,
@@ -1199,7 +1427,7 @@ fn target_reduction_blocks_missing_runner_slot_before_host_fabric_ready() {
         outcome
             .host_fabric_fulfillment_plan
             .missing_role_refs
-            .contains(&"slot:runner".to_string())
+            .contains(&"slot:execution-fulfillment".to_string())
     );
 }
 
@@ -1368,10 +1596,10 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
     validate_fabric_transition_fixture(&fixture).expect("fixture validates");
 
     assert_eq!(fixture.family_ref, "branch-family:0x/fabric-transition");
-    assert_eq!(fixture.services.len(), 8);
-    assert_eq!(fixture.outcomes.len(), 8);
-    assert_eq!(fixture.service_hardening_observations.len(), 8);
-    assert_eq!(fixture.adapter_execution_evidence.len(), 8);
+    assert_eq!(fixture.services.len(), 9);
+    assert_eq!(fixture.outcomes.len(), 9);
+    assert_eq!(fixture.service_hardening_observations.len(), 9);
+    assert_eq!(fixture.adapter_execution_evidence.len(), 9);
     assert_eq!(fixture.transition_state, FABRIC_FULFILLMENT_PLAN_READY);
     assert!(fixture.blocked_reasons.is_empty());
     assert!(fixture.shadow_parity.disagreement_role_refs.is_empty());
@@ -1392,6 +1620,7 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
     assert!(service_roles.contains(FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION));
     assert!(service_roles.contains(FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE));
     assert!(service_roles.contains(FABRIC_MEMBER_ROLE_BUILD_PROCESSOR));
+    assert!(service_roles.contains(FABRIC_MEMBER_ROLE_EXECUTION_FULFILLMENT));
     assert!(service_roles.contains(FABRIC_MEMBER_ROLE_RUNTIME));
     assert!(service_roles.contains(FABRIC_MEMBER_ROLE_SURFACE));
     assert!(service_roles.contains(FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR));
@@ -1407,7 +1636,32 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_GATEWAY_ASSOCIATION)));
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE)));
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_BUILD_PROCESSOR)));
+    assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_EXECUTION_FULFILLMENT)));
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_RUNTIME)));
+    let runner_outcome = fixture
+        .outcomes
+        .iter()
+        .find(|outcome| outcome.service_id == "constitute-runner")
+        .expect("runner execution fulfillment outcome");
+    assert_eq!(
+        runner_outcome
+            .host_fabric_contribution
+            .as_ref()
+            .unwrap()
+            .role,
+        FABRIC_MEMBER_ROLE_EXECUTION_FULFILLMENT
+    );
+    assert!(
+        runner_outcome
+            .target_registry_posture
+            .slot_postures
+            .iter()
+            .any(|slot| {
+                slot.slot_ref == "slot:execution-fulfillment"
+                    && slot.selected_fulfillment_ref.as_deref()
+                        == Some(&format!("member:{DEFAULT_RUNNER_REF}"))
+            })
+    );
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_SURFACE)));
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_LOGGING_PROCESSOR)));
     assert!(aggregate_roles.contains(&role_ref(FABRIC_MEMBER_ROLE_DOMAIN_SERVICE)));
@@ -1416,7 +1670,7 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
             .aggregate_fulfillment_plan
             .member_contribution_refs
             .len(),
-        8
+        9
     );
     assert_eq!(
         fixture.aggregate_fulfillment_plan.action_authority_refs,
@@ -1461,8 +1715,8 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
                 role_ref(FABRIC_MEMBER_ROLE_BUILD_PROCESSOR)
             ))
     );
-    assert_eq!(fixture.shadow_parity.agreement_role_refs.len(), 8);
-    assert_eq!(fixture.aggregate_topology_projection.role_postures.len(), 8);
+    assert_eq!(fixture.shadow_parity.agreement_role_refs.len(), 9);
+    assert_eq!(fixture.aggregate_topology_projection.role_postures.len(), 9);
     assert!(
         fixture
             .shadow_parity
@@ -1515,6 +1769,216 @@ fn fabric_transition_fixture_models_current_services_as_distinct_roles() {
 }
 
 #[test]
+fn lifecycle_manifest_admission_consumes_manifest_and_promotion_refs() {
+    let lifecycle_manifest_seed = serde_json::json!({
+        "kind": "lifecycle.manifest.seed",
+        "manifestRef": "lifecycle:manifest:native-dev:constitute-build:abc123",
+        "state": "degraded",
+        "promotionState": "candidateReady",
+        "targetRef": "lifecycle-target:native-dev:constitute-build:main",
+        "candidateRefs": ["candidate:native-dev:constitute-build:abc123"],
+        "sourceSnapshotRefs": ["source:snapshot:native-dev:constitute-build:abc123"],
+        "contentIndexRefs": ["content-index:native-dev:constitute-build:abc123"],
+        "buildRefs": ["build:contract:native-dev:constitute-build:abc123"],
+        "buildRunRefs": ["build:run:native-dev:constitute-build:abc123"],
+        "artifactRefs": ["build:artifact:native-dev:constitute-build:abc123"],
+        "storageRefs": ["storage:object:module:native-dev:constitute-build:abc123"],
+        "proofRefs": ["build:proof:native-dev:constitute-build:abc123"],
+        "releaseCandidateRefs": ["release:candidate:native-dev:constitute-build:abc123"],
+        "rollbackRefs": ["rollback:lifecycle:native-dev:constitute-build:abc123"],
+        "cleanupRefs": ["cleanup:lifecycle:native-dev:constitute-build:abc123"],
+        "proofGateRefs": ["proof-gate:native-build:projection-fulfilled"],
+        "governanceRefs": ["governance:promotion:native-dev:operator-seed"],
+        "conflictRefs": ["transition-conflict:constitute-build:repo:dirty"],
+        "evidenceRefs": ["build:proof:native-dev:constitute-build:abc123"],
+        "blockedReasons": [],
+        "safeFacts": {
+            "acceptedAsMain": false,
+            "promotionModel": "candidate-ready-not-pr"
+        }
+    });
+    let promotion_intent_posture = serde_json::json!({
+        "kind": "contract.intention.posture",
+        "intentionRef": "promotion:intent:native-dev:constitute-build:abc123",
+        "state": "degraded",
+        "canonicalHashRef": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "contentIndexRefs": ["content-index:native-dev:constitute-build:abc123"],
+        "sourceGraphRefs": ["source-root:workspace-dev"],
+        "sourceSnapshotRefs": ["source:snapshot:native-dev:constitute-build:abc123"],
+        "branchRefs": ["branch:main"],
+        "projectRefs": ["project:constituency"],
+        "workItemRefs": ["work-item:native-lifecycle-promotion"],
+        "buildRefs": ["build:contract:native-dev:constitute-build:abc123"],
+        "releaseRefs": ["release:candidate:native-dev:constitute-build:abc123"],
+        "rollbackRefs": ["rollback:lifecycle:native-dev:constitute-build:abc123"],
+        "compatibilityRefs": ["compat:native-lifecycle:seed-v1"],
+        "proofGateRefs": ["proof-gate:native-build:projection-fulfilled"],
+        "reducerRefs": ["reducer:lifecycle-promotion:native-dev"],
+        "evidenceRefs": ["build:proof:native-dev:constitute-build:abc123"],
+        "blockedReasons": []
+    });
+    let outcome = admit_lifecycle_manifest(LifecycleManifestAdmissionInput {
+        service_id: Some("constitute-build".to_string()),
+        subject_ref: Some("service:build.processor".to_string()),
+        module_ref: Some("module:native-dev:constitute-build".to_string()),
+        operation: Some(SERVICE_MANAGER_OPERATION_RELEASE.to_string()),
+        requested_at: Some(DEFAULT_NOW + 300),
+        lifecycle_manifest_seed: lifecycle_manifest_seed.clone(),
+        promotion_intent_posture: promotion_intent_posture.clone(),
+        host_fabric_contributions: vec![
+            admission_dependency_contribution(FABRIC_MEMBER_ROLE_SOURCE_CONTENT_INDEX, "source"),
+            admission_dependency_contribution(FABRIC_MEMBER_ROLE_BUILD_PROCESSOR, "build"),
+            admission_dependency_contribution(FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE, "storage"),
+            admission_dependency_contribution(
+                FABRIC_MEMBER_ROLE_EXECUTION_FULFILLMENT,
+                "execution",
+            ),
+        ],
+    })
+    .expect("manifest admission");
+
+    assert_eq!(outcome.kind, "service-manager.lifecycle-manifest.admission");
+    assert_eq!(outcome.state, "degraded");
+    assert_eq!(
+        outcome.lifecycle_manifest_ref,
+        lifecycle_manifest_seed["manifestRef"]
+    );
+    assert_eq!(
+        outcome.promotion_intent_ref,
+        promotion_intent_posture["intentionRef"]
+    );
+    assert!(outcome.blocked_reasons.is_empty());
+    assert_eq!(
+        outcome.operation_outcome.state,
+        SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED
+    );
+    assert_eq!(
+        outcome.operation_outcome.lifecycle_plan.contract_ref,
+        lifecycle_manifest_seed["manifestRef"]
+    );
+    assert_eq!(
+        outcome.release_contract.content_index_refs,
+        vec!["content-index:native-dev:constitute-build:abc123".to_string()]
+    );
+    assert_eq!(
+        outcome.release_contract.build_run_refs,
+        vec!["build:run:native-dev:constitute-build:abc123".to_string()]
+    );
+    assert!(
+        outcome
+            .release_contract
+            .source_operation_refs
+            .contains(&"promotion:intent:native-dev:constitute-build:abc123".to_string())
+    );
+    assert_eq!(
+        outcome.selected_refs["releaseRef"],
+        "release:candidate:native-dev:constitute-build:abc123"
+    );
+    assert_eq!(
+        outcome.selected_refs["storageRefs"][0],
+        "storage:object:module:native-dev:constitute-build:abc123"
+    );
+    assert_eq!(outcome.safe_facts["dependencyEdgeCount"], 4);
+    assert_eq!(
+        outcome.safe_facts["dependencyMissingRefs"],
+        serde_json::json!([])
+    );
+    assert_eq!(outcome.safe_facts["serviceManagerOwnsSourceTruth"], false);
+    assert_eq!(
+        outcome.safe_facts["serviceManagerOwnsDependencyExecution"],
+        false
+    );
+    assert_eq!(outcome.safe_facts["dependencyReductionDeferred"], false);
+    assert!(
+        outcome
+            .operation_outcome
+            .lifecycle_plan
+            .dependency_edges
+            .iter()
+            .all(|edge| edge.state == "ready")
+    );
+}
+
+#[test]
+fn lifecycle_manifest_admission_blocks_missing_fabric_dependencies_without_deferring_reduction() {
+    let lifecycle_manifest_seed = serde_json::json!({
+        "kind": "lifecycle.manifest.seed",
+        "manifestRef": "lifecycle:manifest:native-dev:missing-dependencies",
+        "state": "ready",
+        "targetRef": "lifecycle-target:native-dev:missing-dependencies:main",
+        "sourceSnapshotRefs": ["source:snapshot:native-dev:missing-dependencies"],
+        "contentIndexRefs": ["content-index:native-dev:missing-dependencies"],
+        "buildRefs": ["build:contract:native-dev:missing-dependencies"],
+        "buildRunRefs": ["build:run:native-dev:missing-dependencies"],
+        "artifactRefs": ["build:artifact:native-dev:missing-dependencies"],
+        "storageRefs": ["storage:object:module:native-dev:missing-dependencies"],
+        "proofRefs": ["build:proof:native-dev:missing-dependencies"],
+        "releaseCandidateRefs": ["release:candidate:native-dev:missing-dependencies"],
+        "rollbackRefs": ["rollback:lifecycle:native-dev:missing-dependencies"],
+        "blockedReasons": [],
+        "safeFacts": {
+            "acceptedAsMain": false
+        }
+    });
+    let promotion_intent_posture = serde_json::json!({
+        "kind": "contract.intention.posture",
+        "intentionRef": "promotion:intent:native-dev:missing-dependencies",
+        "state": "ready",
+        "canonicalHashRef": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "contentIndexRefs": ["content-index:native-dev:missing-dependencies"],
+        "sourceSnapshotRefs": ["source:snapshot:native-dev:missing-dependencies"],
+        "branchRefs": ["branch:main"],
+        "projectRefs": ["project:constituency"],
+        "workItemRefs": ["work-item:native-lifecycle-promotion"],
+        "buildRefs": ["build:contract:native-dev:missing-dependencies"],
+        "releaseRefs": ["release:candidate:native-dev:missing-dependencies"],
+        "rollbackRefs": ["rollback:lifecycle:native-dev:missing-dependencies"],
+        "reducerRefs": ["reducer:lifecycle-promotion:native-dev"],
+        "blockedReasons": []
+    });
+    let outcome = admit_lifecycle_manifest(LifecycleManifestAdmissionInput {
+        service_id: Some("missing-dependency-service".to_string()),
+        subject_ref: Some("service:missing-dependency".to_string()),
+        module_ref: Some("module:native-dev:missing-dependencies".to_string()),
+        operation: Some(SERVICE_MANAGER_OPERATION_RELEASE.to_string()),
+        requested_at: Some(DEFAULT_NOW + 310),
+        lifecycle_manifest_seed,
+        promotion_intent_posture,
+        host_fabric_contributions: vec![],
+    })
+    .expect("manifest admission");
+
+    assert_eq!(outcome.state, "blocked");
+    assert_eq!(
+        outcome.operation_outcome.state,
+        SERVICE_MANAGER_OPERATION_STATE_SUCCEEDED
+    );
+    assert_eq!(
+        outcome.operation_outcome.lifecycle_plan.state,
+        FABRIC_LIFECYCLE_PLAN_BLOCKED
+    );
+    assert_eq!(outcome.release_contract.state, "ready");
+    assert_eq!(outcome.safe_facts["dependencyReductionDeferred"], false);
+    assert_eq!(outcome.safe_facts["dependencyEdgeCount"], 4);
+    assert_eq!(
+        outcome
+            .operation_outcome
+            .lifecycle_plan
+            .dependency_edges
+            .iter()
+            .filter(|edge| edge.state == "missing")
+            .count(),
+        4
+    );
+    assert!(
+        outcome
+            .blocked_reasons
+            .iter()
+            .any(|reason| reason == "lifecycleDependency:missing:role:sourceContentIndex")
+    );
+}
+
+#[test]
 fn state_file_roundtrips_through_cli_contract_helpers() {
     let path = std::env::temp_dir().join(format!(
         "constitute-service-manager-state-{}-{}.json",
@@ -1557,6 +2021,7 @@ fn cli_run_and_status_roundtrip_state_file() {
         DEFAULT_NOW
     ));
     let path_arg = path.to_string_lossy().to_string();
+    let _ = std::fs::remove_file(&path);
 
     let run = std::process::Command::new(env!("CARGO_BIN_EXE_constitute-service-manager"))
         .args([
@@ -1689,6 +2154,153 @@ fn cli_run_and_status_roundtrip_state_file() {
     let posture: constitute_protocol::ServiceManagerPostureRecord =
         serde_json::from_slice(&status.stdout).expect("posture json");
     assert_eq!(posture.state, SERVICE_MANAGER_POSTURE_READY);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn cli_run_selects_current_fabric_service_from_default_state() {
+    let path = std::env::temp_dir().join(format!(
+        "constitute-service-manager-current-fabric-service-{}-{}.json",
+        std::process::id(),
+        DEFAULT_NOW
+    ));
+    let path_arg = path.to_string_lossy().to_string();
+    let _ = std::fs::remove_file(&path);
+
+    let seed = std::process::Command::new(env!("CARGO_BIN_EXE_constitute-service-manager"))
+        .args([
+            "run",
+            "--state",
+            &path_arg,
+            "--service",
+            "constitute-service-manager",
+            "--operation",
+            SERVICE_MANAGER_OPERATION_HEALTH_CHECK,
+            "--at",
+            "1700000000",
+        ])
+        .output()
+        .expect("seed current fabric service cli");
+    assert!(
+        seed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&seed.stderr)
+    );
+
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_constitute-service-manager"))
+        .args([
+            "run",
+            "--state",
+            &path_arg,
+            "--service",
+            "constitute-service-manager",
+            "--operation",
+            SERVICE_MANAGER_OPERATION_HEALTH_CHECK,
+            "--at",
+            "1700000100",
+            "--fabric-control-role",
+            FABRIC_MEMBER_ROLE_HOST_SERVICE_ADAPTER,
+        ])
+        .output()
+        .expect("run current fabric service cli");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let outcome: constitute_service_manager::ServiceOperationOutcome =
+        serde_json::from_slice(&run.stdout).expect("outcome json");
+    assert_eq!(outcome.service_id, "constitute-service-manager");
+    assert_eq!(outcome.fabric_control_decision.state, "ready");
+    assert_eq!(
+        outcome.host_fabric_legacy_control_bridge.state,
+        FABRIC_LEGACY_CONTROL_FALLBACK_AVAILABLE
+    );
+    assert_eq!(
+        outcome.host_fabric_adapter_execution_evidence.state,
+        FABRIC_ADAPTER_EXECUTION_SUCCEEDED
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn cli_admit_manifest_reads_manifest_admission_input() {
+    let path = std::env::temp_dir().join(format!(
+        "constitute-service-manager-admit-manifest-{}-{}.json",
+        std::process::id(),
+        DEFAULT_NOW
+    ));
+    let input = serde_json::json!({
+        "serviceId": "constitute-build",
+        "subjectRef": "service:build.processor",
+        "operation": SERVICE_MANAGER_OPERATION_RELEASE,
+        "requestedAt": DEFAULT_NOW + 350,
+        "lifecycleManifestSeed": {
+            "kind": "lifecycle.manifest.seed",
+            "manifestRef": "lifecycle:manifest:native-dev:constitute-build:cli",
+            "state": "ready",
+            "targetRef": "lifecycle-target:native-dev:constitute-build:main",
+            "sourceSnapshotRefs": ["source:snapshot:native-dev:constitute-build:cli"],
+            "contentIndexRefs": ["content-index:native-dev:constitute-build:cli"],
+            "buildRefs": ["build:contract:native-dev:constitute-build:cli"],
+            "buildRunRefs": ["build:run:native-dev:constitute-build:cli"],
+            "artifactRefs": ["build:artifact:native-dev:constitute-build:cli"],
+            "proofRefs": ["build:proof:native-dev:constitute-build:cli"],
+            "releaseCandidateRefs": ["release:candidate:native-dev:constitute-build:cli"],
+            "rollbackRefs": ["rollback:lifecycle:native-dev:constitute-build:cli"],
+            "proofGateRefs": ["proof-gate:native-build:projection-fulfilled"],
+            "blockedReasons": [],
+            "safeFacts": {
+                "acceptedAsMain": false
+            }
+        },
+        "promotionIntentPosture": {
+            "kind": "contract.intention.posture",
+            "intentionRef": "promotion:intent:native-dev:constitute-build:cli",
+            "state": "ready",
+            "canonicalHashRef": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "contentIndexRefs": ["content-index:native-dev:constitute-build:cli"],
+            "sourceSnapshotRefs": ["source:snapshot:native-dev:constitute-build:cli"],
+            "branchRefs": ["branch:main"],
+            "projectRefs": ["project:constituency"],
+            "workItemRefs": ["work-item:native-lifecycle-promotion"],
+            "buildRefs": ["build:contract:native-dev:constitute-build:cli"],
+            "releaseRefs": ["release:candidate:native-dev:constitute-build:cli"],
+            "rollbackRefs": ["rollback:lifecycle:native-dev:constitute-build:cli"],
+            "proofGateRefs": ["proof-gate:native-build:projection-fulfilled"],
+            "reducerRefs": ["reducer:lifecycle-promotion:native-dev"],
+            "blockedReasons": []
+        },
+        "hostFabricContributions": [
+            admission_dependency_contribution(FABRIC_MEMBER_ROLE_SOURCE_CONTENT_INDEX, "cli-source"),
+            admission_dependency_contribution(FABRIC_MEMBER_ROLE_BUILD_PROCESSOR, "cli-build"),
+            admission_dependency_contribution(FABRIC_MEMBER_ROLE_STORAGE_JOURNAL_CACHE, "cli-storage"),
+            admission_dependency_contribution(FABRIC_MEMBER_ROLE_EXECUTION_FULFILLMENT, "cli-execution")
+        ]
+    });
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&input).expect("input json"),
+    )
+    .expect("write input");
+    let path_arg = path.to_string_lossy().to_string();
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_constitute-service-manager"))
+        .args(["admit-manifest", "--input", &path_arg])
+        .output()
+        .expect("run cli");
+    assert!(run.status.success());
+    let outcome: constitute_service_manager::LifecycleManifestAdmissionOutcome =
+        serde_json::from_slice(&run.stdout).expect("outcome json");
+    assert_eq!(outcome.state, "ready");
+    assert_eq!(
+        outcome.operation_outcome.lifecycle_plan.contract_ref,
+        "lifecycle:manifest:native-dev:constitute-build:cli"
+    );
+    assert_eq!(
+        outcome.release_contract.build_run_refs,
+        vec!["build:run:native-dev:constitute-build:cli".to_string()]
+    );
+    assert!(outcome.blocked_reasons.is_empty());
     let _ = std::fs::remove_file(path);
 }
 
